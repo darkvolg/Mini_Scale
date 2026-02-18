@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Review — Mini Scale</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      line-height: 1.7;
+      padding: 40px 20px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    /* ─── Header ─── */
+    .header {
+      text-align: center;
+      margin-bottom: 50px;
+      padding: 40px 30px;
+      background: linear-gradient(135deg, #161b22 0%, #1a1f2b 100%);
+      border: 1px solid #30363d;
+      border-radius: 16px;
+    }
+
+    .header h1 {
+      font-size: 28px;
+      color: #58a6ff;
+      margin-bottom: 8px;
+    }
+
+    .header .subtitle {
+      font-size: 14px;
+      color: #8b949e;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .header .stats {
+      margin-top: 24px;
+      display: flex;
+      justify-content: center;
+      gap: 30px;
+    }
+
+    .stat-box {
+      padding: 12px 28px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .stat-errors {
+      background: rgba(248, 81, 73, 0.12);
+      border: 1px solid rgba(248, 81, 73, 0.35);
+      color: #f85149;
+    }
+
+    .stat-improvements {
+      background: rgba(56, 139, 253, 0.12);
+      border: 1px solid rgba(56, 139, 253, 0.35);
+      color: #58a6ff;
+    }
+
+    /* ─── Section titles ─── */
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin: 50px 0 30px 0;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    .section-title.errors { color: #f85149; }
+    .section-title.improvements { color: #58a6ff; }
+
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+    }
+
+    .section-title.errors::after { background: linear-gradient(90deg, #f85149 0%, transparent 100%); }
+    .section-title.improvements::after { background: linear-gradient(90deg, #58a6ff 0%, transparent 100%); }
+
+    /* ─── Cards ─── */
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      margin-bottom: 18px;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+
+    .card:hover { border-color: #484f58; }
+
+    .card.error { border-left: 4px solid #f85149; }
+    .card.improvement { border-left: 4px solid #58a6ff; }
+
+    .card-header {
+      padding: 18px 24px 0 24px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .card-number {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+      margin-top: 2px;
+    }
+
+    .card.error .card-number {
+      background: rgba(248, 81, 73, 0.15);
+      color: #f85149;
+      border: 1px solid rgba(248, 81, 73, 0.3);
+    }
+
+    .card.improvement .card-number {
+      background: rgba(56, 139, 253, 0.15);
+      color: #58a6ff;
+      border: 1px solid rgba(56, 139, 253, 0.3);
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #e6edf3;
+      padding-top: 4px;
+    }
+
+    .card-body {
+      padding: 14px 24px 20px 68px;
+    }
+
+    .card-location {
+      display: inline-block;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 12px;
+      background: rgba(110, 118, 129, 0.15);
+      color: #8b949e;
+      padding: 2px 10px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+    }
+
+    .card-text {
+      color: #b1bac4;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .card-text strong {
+      color: #e6edf3;
+    }
+
+    /* ─── Code blocks ─── */
+    pre {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 10px 0;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    code {
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+
+    pre code {
+      color: #c9d1d9;
+    }
+
+    .card-text code {
+      background: rgba(110, 118, 129, 0.2);
+      color: #e6edf3;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    /* ─── Syntax highlighting ─── */
+    .kw  { color: #ff7b72; }  /* keywords */
+    .fn  { color: #d2a8ff; }  /* functions */
+    .num { color: #79c0ff; }  /* numbers */
+    .str { color: #a5d6ff; }  /* strings */
+    .cmt { color: #8b949e; font-style: italic; }  /* comments */
+    .typ { color: #ffa657; }  /* types */
+    .op  { color: #ff7b72; }  /* operators */
+
+    /* ─── Severity badges ─── */
+    .severity {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-left: 8px;
+      vertical-align: middle;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .severity-high {
+      background: rgba(248, 81, 73, 0.15);
+      color: #f85149;
+      border: 1px solid rgba(248, 81, 73, 0.3);
+    }
+
+    .severity-medium {
+      background: rgba(210, 153, 34, 0.15);
+      color: #d29922;
+      border: 1px solid rgba(210, 153, 34, 0.3);
+    }
+
+    .severity-low {
+      background: rgba(110, 118, 129, 0.15);
+      color: #8b949e;
+      border: 1px solid rgba(110, 118, 129, 0.3);
+    }
+
+    /* ─── Footer ─── */
+    .footer {
+      text-align: center;
+      margin-top: 50px;
+      padding: 24px;
+      color: #484f58;
+      font-size: 13px;
+      border-top: 1px solid #21262d;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ══════════════════════ HEADER ══════════════════════ -->
+  <div class="header">
+    <h1>Code Review</h1>
+    <div class="subtitle">Mini Scale &mdash; ESP8266 + HX711 + SSD1306</div>
+    <div class="stats">
+      <div class="stat-box stat-errors">11 ошибок</div>
+      <div class="stat-box stat-improvements">12 улучшений</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ ERRORS ══════════════════════ -->
+  <div class="section-title errors">ОШИБКИ</div>
+
+  <!-- ── Error 1 ── -->
+  <div class="card error">
+    <div class="card-header">
+      <div class="card-number">1</div>
+      <div class="card-title">Автовыключение игнорирует активность пользователя <span class="severity severity-high">HIGH</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">Mini_Scale.ino.ino : строка 50</div>
+      <pre><code><span class="kw">if</span> (<span class="fn">millis</span>() <span class="op">&gt;</span> <span class="num">180000</span>) {</code></pre>
+      <div class="card-text">
+        Таймер считается от момента включения и <strong>никогда не сбрасывается</strong>.
+        Даже если пользователь активно нажимает кнопки и взвешивает — весы выключатся
+        ровно через 3 минуты. Нужен сброс таймера при любой активности.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Error 2 ── -->
+  <div class="card error">
+    <div class="card-header">
+      <div class="card-number">2</div>
+      <div class="card-title">Сравнение <code>float</code> с нулём через <code>==</code> <span class="severity severity-low">LOW</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">Mini_Scale.ino.ino : строка 34</div>
+      <pre><code><span class="kw">if</span> (smoothed_bat_raw <span class="op">==</span> <span class="num">0</span>) smoothed_bat_raw <span class="op">=</span> current_bat_raw;</code></pre>
+      <div class="card-text">
+        Прямое сравнение <code>float == 0</code> ненадёжно из-за особенностей хранения
+        чисел с плавающей точкой. Лучше использовать <code>&lt; 0.001</code> или
+        <code>bool</code>-флаг первого чтения.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Error 3 ── -->
+  <div class="card error">
+    <div class="card-header">
+      <div class="card-number">3</div>
+      <div class="card-title">Некорректный расчёт напряжения батареи <span class="severity severity-high">HIGH</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">Mini_Scale.ino.ino : строка 39</div>
+      <pre><code><span class="typ">float</span> bat_voltage <span class="op">=</span> smoothed_bat_raw <span class="op">*</span> (<span class="num">4.2</span> <span class="op">/</span> <span class="num">1023.0</span>);</code></pre>
+      <div class="card-text">
+        ESP8266 ADC работает в диапазоне <strong>0–1V</strong>. Формула предполагает, что при
+        4.2V АЦП даёт 1023, но это не так без учёта коэффициента делителя
+        напряжения. Результат будет <strong>завышен</strong>, проценты — некорректны.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Error 4 ── -->
+  <div class="card error">
+    <div class="card-header">
+      <div class="card-number">4</div>
+      <div class="card-title"><code>map()</code> принимает <code>float</code>, но работает с <code>long</code> <span class="severity severity-medium">MEDIUM</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">Mini_Scale.ino.ino : строка 40</div>
+      <pre><code><span class="typ">int</span> bat_percent <span class="op">=</span> <span class="fn">map</span>(bat_voltage <span class="op">*</span> <span class="num">100</span>, <span class="num">320</span>, <span class="num">420</span>, <span class="num">0</span>, <span class="num">100</span>);</code></pre>
+      <div class="card-text">
+        <code>bat_voltage * 100</code> — это <code>float</code>, который неявно приводится к
+        <code>long</code> с потерей дробной части. Результат — скачки процентов на 1–2%.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Error 5 ── -->
+  <div class="card error">
+    <div class="card-header">
+      <div class="card-number">5</div>
+      <div class="card-title">Блокирующая обработка кнопки <span class="severity severity-high">HIGH</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">ButtonControl.h : строки 13–24</div>
+      <pre><code><span class="kw">while</span> (<span class="fn">digitalRead</span>(<span class="num">BUTTON_PIN</span>) <span class="op">==</span> <span class="num">LOW</span>) {
+    ...
+    <span class="fn">delay</span>(<span class="num">100</span>);
+}</code></pre>
+      <div class="card-text">
+        Пока пользователь держит кнопку (до 10+ секунд для Undo Tare), весь <code>loop()</code>
+        заблокирован. Вес не обновляется, батарея не читается, автовыключение не проверяется.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Error 6 ── -->
+  <div class="card error">
+    <div class="card-header">
+      <div class="card-number">6</div>
+      <div class="card-title">Весь код реализован в <code>.h</code> файлах <span class="severity severity-medium">MEDIUM</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">ButtonControl.h &middot; CalibrationMode.h &middot; DisplayControl.h &middot; MemoryControl.h &middot; ScaleControl.h</div>
+      <div class="card-text">
+        Определения функций и глобальных переменных находятся в header-файлах.
+        Если любой <code>.h</code> будет подключён из двух <code>.cpp</code> — ошибка линковки
+        <strong>multiple definition</strong>. Работает только потому, что всё подключается
+        из единственного <code>.ino</code>.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Error 7 ── -->
+  <div class="card error">
+    <div class="card-header">
+      <div class="card-number">7</div>
+      <div class="card-title">Глобальные объекты в header без <code>extern</code> <span class="severity severity-medium">MEDIUM</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">DisplayControl.h:6 &middot; ScaleControl.h:5–7 &middot; MemoryControl.h:12–13</div>
+      <pre><code><span class="typ">Adafruit_SSD1306</span> display(<span class="num">SCREEN_WIDTH</span>, <span class="num">SCREEN_HEIGHT</span>, <span class="op">&amp;</span>Wire, <span class="num">-1</span>);
+<span class="typ">HX711</span> scale;
+<span class="typ">EEPROM_Data</span> savedData;</code></pre>
+      <div class="card-text">
+        Объекты создаются прямо в заголовках. Порядок инициализации не гарантирован,
+        при расширении проекта — неизбежные проблемы.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Error 8 ── -->
+  <div class="card error">
+    <div class="card-header">
+      <div class="card-number">8</div>
+      <div class="card-title">Нет debounce при входе в калибровку <span class="severity severity-medium">MEDIUM</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">Mini_Scale.ino.ino : строка 20</div>
+      <pre><code><span class="kw">if</span> (<span class="fn">digitalRead</span>(<span class="num">BUTTON_PIN</span>) <span class="op">==</span> <span class="num">LOW</span>) {
+    <span class="fn">RunCalibrationMode</span>();
+}</code></pre>
+      <div class="card-text">
+        Единственное чтение без задержки на дребезг. Наводка или случайное
+        замыкание при старте может ложно перевести в режим калибровки.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Error 9 ── -->
+  <div class="card error">
+    <div class="card-header">
+      <div class="card-number">9</div>
+      <div class="card-title">Дублирование инициализации HX711 <span class="severity severity-low">LOW</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">CalibrationMode.h : строка 7</div>
+      <pre><code>scale.<span class="fn">begin</span>(<span class="num">DOUT_PIN</span>, <span class="num">SCK_PIN</span>);</code></pre>
+      <div class="card-text">
+        <code>RunCalibrationMode()</code> вызывает <code>scale.begin()</code> сам, а <code>Scale_Init()</code>
+        делает то же самое. При изменении порядка вызовов — двойная инициализация.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Error 10 ── -->
+  <div class="card error">
+    <div class="card-header">
+      <div class="card-number">10</div>
+      <div class="card-title"><code>long</code> вместо <code>unsigned long</code> для <code>millis()</code> <span class="severity severity-medium">MEDIUM</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">ButtonControl.h:11 &middot; CalibrationMode.h:50</div>
+      <pre><code><span class="typ">long</span> pressTime <span class="op">=</span> <span class="fn">millis</span>();</code></pre>
+      <div class="card-text">
+        <code>millis()</code> возвращает <code>unsigned long</code>. Присвоение в <code>long</code> приведёт
+        к некорректным значениям после ~24.8 дня непрерывной работы.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Error 11 ── -->
+  <div class="card error">
+    <div class="card-header">
+      <div class="card-number">11</div>
+      <div class="card-title">Переполнение <code>millis()</code> не обработано <span class="severity severity-low">LOW</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">Mini_Scale.ino.ino:50 &middot; ButtonControl.h:11,26</div>
+      <div class="card-text">
+        <code>millis()</code> переполняется через ~49 дней. Проверка <code>millis() &gt; 180000</code>
+        вместо <code>millis() - lastActivity &gt; 180000</code> не защищена от переполнения
+        (хотя для 3-минутного таймера маловероятно).
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ IMPROVEMENTS ══════════════════════ -->
+  <div class="section-title improvements">УЛУЧШЕНИЯ</div>
+
+  <!-- ── Improvement 1 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">1</div>
+      <div class="card-title">Сброс таймера автовыключения при активности</div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        Сохранять <code>lastActivityTime = millis()</code> при нажатии кнопки или изменении
+        веса. Проверять <code>millis() - lastActivityTime &gt; 180000</code> вместо абсолютного
+        сравнения.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Improvement 2 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">2</div>
+      <div class="card-title">Неблокирующая обработка кнопки (state machine)</div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        Заменить <code>while</code>-цикл ожидания отпускания кнопки на конечный автомат,
+        который проверяет состояние на каждой итерации <code>loop()</code>. Это позволит
+        продолжать обновлять вес и батарею во время удержания.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Improvement 3 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">3</div>
+      <div class="card-title">Фильтрация показаний веса</div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        <code>Scale_Update()</code> берёт единственное чтение — <code>get_units(1)</code>.
+        Показания будут прыгать. Нужно скользящее среднее (как для батареи)
+        или увеличить число чтений до <code>get_units(3)</code>.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Improvement 4 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">4</div>
+      <div class="card-title">Нелинейный расчёт процента батареи</div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        Линейная интерполяция <code>map()</code> между 3.2V и 4.2V неточна —
+        разряд Li-Ion <strong>нелинеен</strong>. Lookup-таблица напряжение/процент даст
+        более реалистичные показания.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Improvement 5 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">5</div>
+      <div class="card-title">Индикация низкого заряда</div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        Если <code>bat_percent &lt; 10%</code> — показать предупреждение на дисплее.
+        Сейчас пользователь не узнает о разряде, пока весы не выключатся.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Improvement 6 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">6</div>
+      <div class="card-title">Переменный шаг калибровки</div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        Шаг фиксирован: <code>+10</code> / <code>-10</code>. Для точной настройки нужен
+        дополнительный режим с шагом <code>+1</code> / <code>-1</code>.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Improvement 7 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">7</div>
+      <div class="card-title">Разделить <code>.h</code> и <code>.cpp</code></div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        Перенести реализацию функций в <code>.cpp</code> файлы, оставив в <code>.h</code>
+        только объявления — стандартная практика C++.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Improvement 8 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">8</div>
+      <div class="card-title">Отображать ошибку HX711 на дисплее</div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        Сейчас если HX711 не найден при старте, сообщение идёт только
+        в Serial. Пользователь без компьютера его не увидит. Нужно показывать
+        ошибку на OLED-дисплее.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Improvement 9 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">9</div>
+      <div class="card-title">Сохранять вес перед автовыключением</div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        Перед <code>deepSleep</code> вызвать:
+      </div>
+      <pre><code>savedData.<span class="fn">last_weight</span> <span class="op">=</span> current_weight;
+<span class="fn">Memory_Save</span>();</code></pre>
+      <div class="card-text">
+        Иначе дельта при следующем включении будет считаться от устаревшего значения.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Improvement 10 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">10</div>
+      <div class="card-title">Таймаут / выход без сохранения в калибровке</div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        <code>while(true)</code> — бесконечный цикл без выхода. Если пользователь
+        случайно зашёл в калибровку — единственный способ выйти —
+        физическая перезагрузка. Нужен пункт меню &laquo;Exit without save&raquo;
+        или автовыход по таймауту.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Improvement 11 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">11</div>
+      <div class="card-title">Контроль износа EEPROM</div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        <code>Memory_Save()</code> вызывается при каждом тарировании и при каждом старте.
+        Ресурс EEPROM ESP8266 — ~100 000 циклов. Стоит минимизировать записи
+        или использовать ротацию адресов (wear leveling).
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Improvement 12 ── -->
+  <div class="card improvement">
+    <div class="card-header">
+      <div class="card-number">12</div>
+      <div class="card-title">Программный debounce для кнопки</div>
+    </div>
+    <div class="card-body">
+      <div class="card-text">
+        Ни в <code>Button_Check()</code>, ни при входе в калибровку нет устранения
+        дребезга контактов. Фильтр 20–50 мс после обнаружения нажатия
+        устранит ложные срабатывания.
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ FOOTER ══════════════════════ -->
+  <div class="footer">
+    Mini Scale Code Review &mdash; Generated by Claude
+  </div>
+
+</div>
+</body>
+</html>
