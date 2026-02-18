@@ -11,8 +11,8 @@ void Scale_Init() {
   scale.begin(DOUT_PIN, SCK_PIN);
   scale.set_scale(savedData.cal_factor); // Берем коэффициент из памяти
   scale.set_offset(savedData.tare_offset);
-  
-  delay(500); 
+
+  delay(500);
 
   if (scale.is_ready()) {
     float startup_weight = scale.get_units(10);
@@ -26,7 +26,7 @@ void Scale_Init() {
 
 void Scale_Update() {
   if (scale.is_ready()) {
-    current_weight = scale.get_units(1); 
+    current_weight = scale.get_units(3); // 3 чтения для сглаживания шума
   } else {
     current_weight = -99.9; // Флаг ошибки
   }
@@ -34,16 +34,22 @@ void Scale_Update() {
 
 void Scale_Tare() {
   savedData.backup_offset = savedData.tare_offset;
-  scale.tare(10); 
+  scale.tare(10);
   savedData.tare_offset = scale.get_offset();
-  
-  session_delta = 0.0; 
+
+  session_delta = 0.0;
   savedData.last_weight = 0.0;
   Memory_Save();
 }
 
 void Scale_UndoTare() {
   savedData.tare_offset = savedData.backup_offset;
-  Memory_Save();
   scale.set_offset(savedData.tare_offset);
+
+  // Пересчитываем дельту с восстановленным offset
+  if (scale.is_ready()) {
+    float w = scale.get_units(5);
+    session_delta = w - savedData.last_weight;
+  }
+  Memory_Save();
 }

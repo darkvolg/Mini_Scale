@@ -6,7 +6,7 @@
 
 void RunCalibrationMode() {
   scale.begin(DOUT_PIN, SCK_PIN); // Инициализируем железо
-  
+
   display.clearDisplay();
   display.setTextSize(1);
   display.setCursor(0, 20);
@@ -15,11 +15,12 @@ void RunCalibrationMode() {
   display.display();
 
   // Ждем, пока отпустят кнопку
-  while(digitalRead(BUTTON_PIN) == LOW) { delay(10); } 
+  while(digitalRead(BUTTON_PIN) == LOW) { delay(10); }
+  delay(50); // debounce после отпускания
 
-  int menu_mode = 0; 
+  int menu_mode = 0; // 0=+10, 1=-10, 2=+1, 3=-1, 4=SAVE
   float current_factor = savedData.cal_factor;
-  scale.set_offset(savedData.tare_offset); // Обнуляем для чистоты
+  scale.set_offset(savedData.tare_offset);
 
   while(true) {
     scale.set_scale(current_factor);
@@ -27,7 +28,7 @@ void RunCalibrationMode() {
     if (scale.is_ready()) w = scale.get_units(3);
 
     display.clearDisplay();
-    
+
     // Вес крупно
     display.setTextSize(2);
     display.setCursor(0, 0);
@@ -36,33 +37,41 @@ void RunCalibrationMode() {
     // Текущий фактор
     display.setTextSize(1);
     display.setCursor(0, 25);
-    display.print("Factor: "); display.println(current_factor, 0);
+    display.print("Factor: "); display.println(current_factor, 1);
 
     // Управление
     display.setCursor(0, 45);
     if (menu_mode == 0)      { display.println("[Hold] Next Mode"); display.print("[Click] + 10"); }
     else if (menu_mode == 1) { display.println("[Hold] Next Mode"); display.print("[Click] - 10"); }
-    else if (menu_mode == 2) { display.println("[Hold] Next Mode"); display.print("[Click] SAVE & EXIT"); }
-    
+    else if (menu_mode == 2) { display.println("[Hold] Next Mode"); display.print("[Click] + 1"); }
+    else if (menu_mode == 3) { display.println("[Hold] Next Mode"); display.print("[Click] - 1"); }
+    else if (menu_mode == 4) { display.println("[Hold] Next Mode"); display.print("[Click] SAVE & EXIT"); }
+
     display.display();
 
     // Обработка кликов
     if (digitalRead(BUTTON_PIN) == LOW) {
+      delay(50); // debounce
+      if (digitalRead(BUTTON_PIN) != LOW) continue; // ложное срабатывание
+
       unsigned long pressTime = millis();
       while(digitalRead(BUTTON_PIN) == LOW) { delay(10); }
+      delay(50); // debounce после отпускания
       unsigned long duration = millis() - pressTime;
 
-      if (duration > 800) { 
+      if (duration > 800) {
         menu_mode++; // Длинное нажатие меняет режим
-        if (menu_mode > 2) menu_mode = 0;
-      } else { 
+        if (menu_mode > 4) menu_mode = 0;
+      } else {
         // Короткий клик выполняет действие
         if (menu_mode == 0) current_factor += 10;
         else if (menu_mode == 1) current_factor -= 10;
-        else if (menu_mode == 2) {
+        else if (menu_mode == 2) current_factor += 1;
+        else if (menu_mode == 3) current_factor -= 1;
+        else if (menu_mode == 4) {
           savedData.cal_factor = current_factor;
           Memory_Save();
-          
+
           display.clearDisplay();
           display.setCursor(0, 20);
           display.setTextSize(2);

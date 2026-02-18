@@ -9,7 +9,15 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 void Display_Init() {
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println(F("SSD1306 allocation failed"));
-    for(;;);
+    // Мигаем встроенным LED 5 раз, затем уходим в deep sleep
+    pinMode(LED_BUILTIN, OUTPUT);
+    for (int i = 0; i < 5; i++) {
+      digitalWrite(LED_BUILTIN, LOW);  // LED на ESP8266 активен при LOW
+      delay(200);
+      digitalWrite(LED_BUILTIN, HIGH);
+      delay(200);
+    }
+    ESP.deepSleep(0); // Уходим в сон вместо бесконечного зависания
   }
   display.clearDisplay();
   display.setTextColor(WHITE);
@@ -17,14 +25,14 @@ void Display_Init() {
 
 void Display_ShowMain(float weight, float delta, float voltage, int bat_percent) {
   display.clearDisplay();
-  
+
   // Отображение веса
   display.setTextSize(2);
   display.setCursor(0, 0);
   if (weight < -99.0) {
     display.println("ERROR"); // Если датчик отвалился
   } else {
-    display.print(weight, 2); 
+    display.print(weight, 2);
     display.println(" kg");
   }
 
@@ -33,15 +41,15 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent)
   display.setCursor(0, 25);
   display.print("Delta: ");
   if (delta > 0) display.print("+");
-  display.print(delta, 2); 
+  display.print(delta, 2);
   display.println(" kg");
 
   // Батарея
   display.setCursor(0, 45);
-  display.print("Bat: "); 
-  display.print(voltage, 2); 
+  display.print("Bat: ");
+  display.print(voltage, 2);
   display.print("V (");
-  display.print(bat_percent); 
+  display.print(bat_percent);
   display.println("%)");
 
   display.display();
