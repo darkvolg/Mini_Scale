@@ -1,5 +1,6 @@
 #pragma once
 #include <HX711.h>
+#include <math.h>
 #include "Config.h"
 #include "MemoryControl.h"
 
@@ -16,6 +17,9 @@ void Scale_Init() {
 
   if (scale.is_ready()) {
     float startup_weight = scale.get_units(10);
+    if (isnan(startup_weight) || isinf(startup_weight)) {
+      startup_weight = 0.0;
+    }
     session_delta = startup_weight - savedData.last_weight;
     savedData.last_weight = startup_weight;
     Memory_Save();
@@ -26,7 +30,12 @@ void Scale_Init() {
 
 void Scale_Update() {
   if (scale.is_ready()) {
-    current_weight = scale.get_units(3); // 3 чтения для сглаживания шума
+    float raw = scale.get_units(3); // 3 чтения для сглаживания шума
+    if (isnan(raw) || isinf(raw)) {
+      current_weight = -99.9; // Аномальные данные — считаем ошибкой
+    } else {
+      current_weight = raw;
+    }
   } else {
     current_weight = -99.9; // Флаг ошибки
   }
@@ -49,7 +58,9 @@ void Scale_UndoTare() {
   // Пересчитываем дельту с восстановленным offset
   if (scale.is_ready()) {
     float w = scale.get_units(5);
-    session_delta = w - savedData.last_weight;
+    if (!isnan(w) && !isinf(w)) {
+      session_delta = w - savedData.last_weight;
+    }
   }
   Memory_Save();
 }

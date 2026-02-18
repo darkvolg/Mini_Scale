@@ -1,3 +1,4 @@
+#include <math.h>
 #include "Config.h"
 #include "MemoryControl.h"
 #include "DisplayControl.h"
@@ -18,12 +19,12 @@ static float prevWeight = 0.0;
 // Кусочно-линейная аппроксимация заряда LiPo по напряжению
 int lipoPercent(float voltage) {
   if (voltage >= 4.15) return 100;
-  if (voltage >= 4.00) return 90 + (voltage - 4.00) / (4.15 - 4.00) * 10;
-  if (voltage >= 3.85) return 70 + (voltage - 3.85) / (4.00 - 3.85) * 20;
-  if (voltage >= 3.73) return 40 + (voltage - 3.73) / (3.85 - 3.73) * 30;
-  if (voltage >= 3.60) return 15 + (voltage - 3.60) / (3.73 - 3.60) * 25;
-  if (voltage >= 3.40) return 5  + (voltage - 3.40) / (3.60 - 3.40) * 10;
-  if (voltage >= 3.20) return (int)((voltage - 3.20) / (3.40 - 3.20) * 5);
+  if (voltage >= 4.00) return (int)(90 + (voltage - 4.00) / (4.15 - 4.00) * 10 + 0.5);
+  if (voltage >= 3.85) return (int)(70 + (voltage - 3.85) / (4.00 - 3.85) * 20 + 0.5);
+  if (voltage >= 3.73) return (int)(40 + (voltage - 3.73) / (3.85 - 3.73) * 30 + 0.5);
+  if (voltage >= 3.60) return (int)(15 + (voltage - 3.60) / (3.73 - 3.60) * 25 + 0.5);
+  if (voltage >= 3.40) return (int)(5  + (voltage - 3.40) / (3.60 - 3.40) * 10 + 0.5);
+  if (voltage >= 3.20) return (int)((voltage - 3.20) / (3.40 - 3.20) * 5 + 0.5);
   return 0;
 }
 
@@ -36,13 +37,28 @@ void setup() {
   Display_ShowMessage("Mem check...");
   Memory_Init();
 
-  // ПРОВЕРКА: Если кнопка зажата при подаче питания -> идем в режим калибровки
-  if (digitalRead(BUTTON_PIN) == LOW) {
-    RunCalibrationMode(); // Из этого режима плата выйдет только через перезагрузку
-  }
-
   Display_ShowMessage("Scale init...");
   Scale_Init();
+
+  // Вход в калибровку: зажать кнопку в первую секунду после загрузки.
+  // D3 (GPIO0) конфликтует с Flash Mode при зажатии ДО подачи питания,
+  // поэтому проверяем ПОСЛЕ загрузки, а не до.
+  Display_ShowMessage("Hold btn for CAL...");
+  unsigned long waitStart = millis();
+  bool enterCal = false;
+  while (millis() - waitStart < 1000UL) {
+    if (digitalRead(BUTTON_PIN) == LOW) {
+      delay(50); // debounce
+      if (digitalRead(BUTTON_PIN) == LOW) {
+        enterCal = true;
+        break;
+      }
+    }
+    delay(10);
+  }
+  if (enterCal) {
+    RunCalibrationMode(); // Из этого режима плата выйдет только через перезагрузку
+  }
 
   // Сбрасываем таймер автовыключения после всех инициализаций
   lastActivityTime = millis();
@@ -53,7 +69,7 @@ void loop() {
   Scale_Update();
 
   // Сбрасываем таймер при значительном изменении веса
-  if (abs(current_weight - prevWeight) > 0.05) {
+  if (fabs(current_weight - prevWeight) > 0.05) {
     lastActivityTime = millis();
     prevWeight = current_weight;
   }

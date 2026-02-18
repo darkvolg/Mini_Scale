@@ -29,7 +29,8 @@ void Button_Check() {
       }
       delay(100);
     }
-    
+    delay(50); // debounce после отпускания
+
     unsigned long totalElapsed = millis() - pressTime;
     
     if (totalElapsed > 10000) {

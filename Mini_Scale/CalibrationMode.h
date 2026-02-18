@@ -4,9 +4,10 @@
 #include "ScaleControl.h"
 #include "DisplayControl.h"
 
-void RunCalibrationMode() {
-  scale.begin(DOUT_PIN, SCK_PIN); // Инициализируем железо
+// Минимальное значение калибровочного фактора (защита от деления на 0)
+#define CAL_FACTOR_MIN 1.0f
 
+void RunCalibrationMode() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setCursor(0, 20);
@@ -80,6 +81,9 @@ void RunCalibrationMode() {
           delay(2000);
           ESP.restart(); // Перезагружаем плату в обычный режим
         }
+
+        // Защита: не даём фактору уйти ниже минимума
+        if (current_factor < CAL_FACTOR_MIN) current_factor = CAL_FACTOR_MIN;
       }
     }
   }
