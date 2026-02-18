@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bug Report — Mini Scale</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      line-height: 1.7;
+      padding: 40px 20px;
+    }
+
+    .container {
+      max-width: 920px;
+      margin: 0 auto;
+    }
+
+    /* ─── Header ─── */
+    .header {
+      text-align: center;
+      margin-bottom: 50px;
+      padding: 44px 30px;
+      background: linear-gradient(135deg, #161b22 0%, #1a1f2b 100%);
+      border: 1px solid #30363d;
+      border-radius: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .header::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #f85149, #d29922, #58a6ff);
+    }
+
+    .header h1 {
+      font-size: 30px;
+      color: #f0f6fc;
+      margin-bottom: 6px;
+      letter-spacing: -0.5px;
+    }
+
+    .header .subtitle {
+      font-size: 14px;
+      color: #8b949e;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .header .date {
+      font-size: 13px;
+      color: #484f58;
+      margin-top: 8px;
+    }
+
+    .header .stats {
+      margin-top: 28px;
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .stat-box {
+      padding: 12px 26px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .stat-high {
+      background: rgba(248, 81, 73, 0.12);
+      border: 1px solid rgba(248, 81, 73, 0.35);
+      color: #f85149;
+    }
+
+    .stat-medium {
+      background: rgba(210, 153, 34, 0.12);
+      border: 1px solid rgba(210, 153, 34, 0.35);
+      color: #d29922;
+    }
+
+    .stat-low {
+      background: rgba(110, 118, 129, 0.12);
+      border: 1px solid rgba(110, 118, 129, 0.25);
+      color: #8b949e;
+    }
+
+    /* ─── Summary table ─── */
+    .summary-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 50px;
+      font-size: 14px;
+    }
+
+    .summary-table th {
+      text-align: left;
+      padding: 12px 16px;
+      background: #161b22;
+      color: #8b949e;
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 1px;
+      border-bottom: 2px solid #30363d;
+    }
+
+    .summary-table td {
+      padding: 10px 16px;
+      border-bottom: 1px solid #21262d;
+      color: #c9d1d9;
+    }
+
+    .summary-table tr:hover td {
+      background: rgba(56, 139, 253, 0.04);
+    }
+
+    .summary-table .file-cell {
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 12px;
+      color: #58a6ff;
+    }
+
+    /* ─── Section title ─── */
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin: 50px 0 28px 0;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: #f0f6fc;
+    }
+
+    .section-title .icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .section-title .icon.red {
+      background: rgba(248, 81, 73, 0.12);
+      border: 1px solid rgba(248, 81, 73, 0.3);
+    }
+
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: linear-gradient(90deg, #30363d 0%, transparent 100%);
+    }
+
+    /* ─── Cards ─── */
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      overflow: hidden;
+      transition: border-color 0.25s, box-shadow 0.25s;
+    }
+
+    .card:hover {
+      border-color: #484f58;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+    }
+
+    .card.severity-high   { border-left: 4px solid #f85149; }
+    .card.severity-medium { border-left: 4px solid #d29922; }
+    .card.severity-low    { border-left: 4px solid #6e7681; }
+
+    .card-header {
+      padding: 20px 24px 0 24px;
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+
+    .card-number {
+      flex-shrink: 0;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+      margin-top: 1px;
+    }
+
+    .card.severity-high .card-number {
+      background: rgba(248, 81, 73, 0.15);
+      color: #f85149;
+      border: 1px solid rgba(248, 81, 73, 0.3);
+    }
+
+    .card.severity-medium .card-number {
+      background: rgba(210, 153, 34, 0.15);
+      color: #d29922;
+      border: 1px solid rgba(210, 153, 34, 0.3);
+    }
+
+    .card.severity-low .card-number {
+      background: rgba(110, 118, 129, 0.15);
+      color: #8b949e;
+      border: 1px solid rgba(110, 118, 129, 0.3);
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #e6edf3;
+      padding-top: 5px;
+      flex: 1;
+    }
+
+    .card-body {
+      padding: 14px 24px 22px 72px;
+    }
+
+    .card-location {
+      display: inline-block;
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 12px;
+      background: rgba(110, 118, 129, 0.15);
+      color: #8b949e;
+      padding: 3px 10px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+
+    .card-text {
+      color: #b1bac4;
+      font-size: 14px;
+      line-height: 1.75;
+    }
+
+    .card-text strong { color: #e6edf3; }
+
+    /* ─── Severity badge ─── */
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-left: 10px;
+      vertical-align: middle;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+
+    .badge-high {
+      background: rgba(248, 81, 73, 0.15);
+      color: #f85149;
+      border: 1px solid rgba(248, 81, 73, 0.3);
+    }
+
+    .badge-medium {
+      background: rgba(210, 153, 34, 0.15);
+      color: #d29922;
+      border: 1px solid rgba(210, 153, 34, 0.3);
+    }
+
+    .badge-low {
+      background: rgba(110, 118, 129, 0.15);
+      color: #8b949e;
+      border: 1px solid rgba(110, 118, 129, 0.3);
+    }
+
+    /* ─── Code blocks ─── */
+    pre {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin: 12px 0;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.65;
+    }
+
+    code {
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+
+    pre code { color: #c9d1d9; }
+
+    .card-text code {
+      background: rgba(110, 118, 129, 0.2);
+      color: #e6edf3;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    /* ─── Syntax highlighting ─── */
+    .kw  { color: #ff7b72; }
+    .fn  { color: #d2a8ff; }
+    .num { color: #79c0ff; }
+    .str { color: #a5d6ff; }
+    .cmt { color: #8b949e; font-style: italic; }
+    .typ { color: #ffa657; }
+    .op  { color: #ff7b72; }
+
+    /* ─── Fix suggestion ─── */
+    .fix-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      color: #3fb950;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 14px;
+      margin-bottom: 4px;
+    }
+
+    .fix-label::before {
+      content: '\2714  ';
+    }
+
+    pre.fix {
+      border-color: rgba(63, 185, 80, 0.3);
+      background: rgba(63, 185, 80, 0.04);
+    }
+
+    /* ─── Footer ─── */
+    .footer {
+      text-align: center;
+      margin-top: 50px;
+      padding: 28px;
+      color: #484f58;
+      font-size: 13px;
+      border-top: 1px solid #21262d;
+    }
+
+    .footer a {
+      color: #58a6ff;
+      text-decoration: none;
+    }
+
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ══════════════════════ HEADER ══════════════════════ -->
+  <div class="header">
+    <h1>Bug Report</h1>
+    <div class="subtitle">Mini Scale &mdash; ESP8266 + HX711 + SSD1306</div>
+    <div class="date">19 февраля 2026</div>
+    <div class="stats">
+      <div class="stat-box stat-high">2 &times; HIGH</div>
+      <div class="stat-box stat-medium">2 &times; MEDIUM</div>
+      <div class="stat-box stat-low">2 &times; LOW</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ SUMMARY ══════════════════════ -->
+  <table class="summary-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Файл</th>
+        <th>Проблема</th>
+        <th>Серьёзность</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td class="file-cell">Mini_Scale.ino:39</td>
+        <td>Некорректная формула напряжения батареи</td>
+        <td><span class="badge badge-medium">MEDIUM</span></td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td class="file-cell">DisplayControl.h:23</td>
+        <td>Сравнение float через <code>==</code></td>
+        <td><span class="badge badge-low">LOW</span></td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td class="file-cell">ButtonControl.h:11</td>
+        <td><code>long</code> вместо <code>unsigned long</code> для millis()</td>
+        <td><span class="badge badge-medium">MEDIUM</span></td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td class="file-cell">CalibrationMode.h:50</td>
+        <td><code>long</code> вместо <code>unsigned long</code> для millis()</td>
+        <td><span class="badge badge-medium">MEDIUM</span></td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td class="file-cell">Mini_Scale.ino:50</td>
+        <td>Автовыключение не сбрасывается при активности</td>
+        <td><span class="badge badge-high">HIGH</span></td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td class="file-cell">ButtonControl.h:10</td>
+        <td>Нет debounce на кнопке</td>
+        <td><span class="badge badge-low">LOW</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ══════════════════════ DETAILS ══════════════════════ -->
+  <div class="section-title">
+    <div class="icon red">&#9888;</div>
+    ПОДРОБНОЕ ОПИСАНИЕ
+  </div>
+
+  <!-- ── Bug 1 ── -->
+  <div class="card severity-medium">
+    <div class="card-header">
+      <div class="card-number">1</div>
+      <div class="card-title">Некорректная формула напряжения батареи <span class="badge badge-medium">MEDIUM</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">Mini_Scale.ino : строка 39</div>
+      <pre><code><span class="typ">float</span> bat_voltage = smoothed_bat_raw <span class="op">*</span> (<span class="num">4.2</span> <span class="op">/</span> <span class="num">1023.0</span>);</code></pre>
+      <div class="card-text">
+        АЦП на ESP8266 работает в диапазоне <strong>0&ndash;1V</strong> и возвращает значение 0&ndash;1023.
+        Формула <code>raw * (4.2 / 1023.0)</code> предполагает, что максимум АЦП (1023) соответствует 4.2V,
+        но без правильного учёта коэффициента делителя напряжения результат будет <strong>завышен</strong>.
+        Необходимо учитывать коэффициент делителя: если делитель 100&nbsp;кОм + 220&nbsp;кОм даёт
+        коэффициент 3.2, то формула должна быть <code>(raw / 1023.0) * 3.2</code>,
+        а затем умножить на коэффициент делителя.
+      </div>
+      <div class="fix-label">Рекомендуемое исправление</div>
+      <pre class="fix"><code><span class="cmt">// Пример для делителя с коэффициентом 4.2:</span>
+<span class="typ">float</span> bat_voltage = (smoothed_bat_raw <span class="op">/</span> <span class="num">1023.0</span>) <span class="op">*</span> <span class="num">4.2</span>;
+<span class="cmt">// Проверить формулу под реальную схему делителя</span></code></pre>
+    </div>
+  </div>
+
+  <!-- ── Bug 2 ── -->
+  <div class="card severity-low">
+    <div class="card-header">
+      <div class="card-number">2</div>
+      <div class="card-title">Сравнение <code>float</code> с точным значением через <code>==</code> <span class="badge badge-low">LOW</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">DisplayControl.h : строка 23</div>
+      <pre><code><span class="kw">if</span> (weight <span class="op">==</span> <span class="num">-99.9</span>) {
+    display.<span class="fn">println</span>(<span class="str">"ERROR"</span>);
+}</code></pre>
+      <div class="card-text">
+        Сравнение числа с плавающей точкой через <code>==</code> ненадёжно из-за погрешности
+        представления. Значение <code>-99.9</code> может не совпасть побитово после присваивания
+        и передачи через параметр функции. На практике здесь это <strong>маловероятно</strong>,
+        т.к. значение присваивается литералом, но безопаснее использовать сравнение по диапазону.
+      </div>
+      <div class="fix-label">Рекомендуемое исправление</div>
+      <pre class="fix"><code><span class="kw">if</span> (weight <span class="op">&lt;</span> <span class="num">-99.0</span>) {
+    display.<span class="fn">println</span>(<span class="str">"ERROR"</span>);
+}</code></pre>
+    </div>
+  </div>
+
+  <!-- ── Bug 3 ── -->
+  <div class="card severity-medium">
+    <div class="card-header">
+      <div class="card-number">3</div>
+      <div class="card-title">Тип <code>long</code> вместо <code>unsigned long</code> для millis() <span class="badge badge-medium">MEDIUM</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">ButtonControl.h : строки 11, 14, 26</div>
+      <pre><code><span class="typ">long</span> pressTime = <span class="fn">millis</span>();
+<span class="typ">long</span> elapsed = <span class="fn">millis</span>() <span class="op">-</span> pressTime;
+<span class="typ">long</span> totalElapsed = <span class="fn">millis</span>() <span class="op">-</span> pressTime;</code></pre>
+      <div class="card-text">
+        <code>millis()</code> возвращает <code>unsigned long</code>. Использование знакового <code>long</code>
+        приведёт к <strong>некорректному поведению</strong> при переполнении счётчика (через ~24.8 дня
+        для <code>long</code> вместо ~49.7 дней). Разность может стать отрицательной, и условия
+        <code>elapsed&nbsp;&gt;&nbsp;5000</code> перестанут срабатывать.
+      </div>
+      <div class="fix-label">Рекомендуемое исправление</div>
+      <pre class="fix"><code><span class="typ">unsigned long</span> pressTime = <span class="fn">millis</span>();
+<span class="typ">unsigned long</span> elapsed = <span class="fn">millis</span>() <span class="op">-</span> pressTime;
+<span class="typ">unsigned long</span> totalElapsed = <span class="fn">millis</span>() <span class="op">-</span> pressTime;</code></pre>
+    </div>
+  </div>
+
+  <!-- ── Bug 4 ── -->
+  <div class="card severity-medium">
+    <div class="card-header">
+      <div class="card-number">4</div>
+      <div class="card-title">Тот же тип <code>long</code> в режиме калибровки <span class="badge badge-medium">MEDIUM</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">CalibrationMode.h : строки 50, 52</div>
+      <pre><code><span class="typ">long</span> pressTime = <span class="fn">millis</span>();
+<span class="kw">while</span>(<span class="fn">digitalRead</span>(BUTTON_PIN) <span class="op">==</span> LOW) { <span class="fn">delay</span>(<span class="num">10</span>); }
+<span class="typ">long</span> duration = <span class="fn">millis</span>() <span class="op">-</span> pressTime;</code></pre>
+      <div class="card-text">
+        Аналогичная проблема с <code>long</code> вместо <code>unsigned long</code> в обработке
+        нажатий кнопки внутри режима калибровки. Потенциальная ошибка при длительной работе устройства
+        в этом режиме.
+      </div>
+      <div class="fix-label">Рекомендуемое исправление</div>
+      <pre class="fix"><code><span class="typ">unsigned long</span> pressTime = <span class="fn">millis</span>();
+<span class="kw">while</span>(<span class="fn">digitalRead</span>(BUTTON_PIN) <span class="op">==</span> LOW) { <span class="fn">delay</span>(<span class="num">10</span>); }
+<span class="typ">unsigned long</span> duration = <span class="fn">millis</span>() <span class="op">-</span> pressTime;</code></pre>
+    </div>
+  </div>
+
+  <!-- ── Bug 5 ── -->
+  <div class="card severity-high">
+    <div class="card-header">
+      <div class="card-number">5</div>
+      <div class="card-title">Автовыключение не сбрасывается при активности <span class="badge badge-high">HIGH</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">Mini_Scale.ino : строка 50</div>
+      <pre><code><span class="kw">if</span> (<span class="fn">millis</span>() <span class="op">&gt;</span> <span class="num">180000</span>) {
+    <span class="fn">Display_ShowMessage</span>(<span class="str">"Auto Power Off..."</span>);
+    <span class="fn">delay</span>(<span class="num">2000</span>);
+    <span class="fn">Display_Sleep</span>();
+    ESP.<span class="fn">deepSleep</span>(<span class="num">0</span>);
+}</code></pre>
+      <div class="card-text">
+        Таймер автовыключения отсчитывается от момента включения и <strong>никогда не сбрасывается</strong>.
+        Даже если пользователь активно взвешивает и нажимает кнопки &mdash; устройство выключится ровно
+        через 3 минуты. Это приведёт к <strong>неожиданному выключению</strong> во время использования.
+        Нужна переменная <code>lastActivityTime</code>, которая обновляется при нажатиях кнопки
+        и изменениях веса.
+      </div>
+      <div class="fix-label">Рекомендуемое исправление</div>
+      <pre class="fix"><code><span class="cmt">// Глобальная переменная:</span>
+<span class="typ">unsigned long</span> lastActivityTime = <span class="num">0</span>;
+
+<span class="cmt">// В loop():</span>
+<span class="kw">if</span> (<span class="fn">millis</span>() <span class="op">-</span> lastActivityTime <span class="op">&gt;</span> <span class="num">180000</span>) {
+    <span class="fn">Display_ShowMessage</span>(<span class="str">"Auto Power Off..."</span>);
+    <span class="fn">delay</span>(<span class="num">2000</span>);
+    <span class="fn">Display_Sleep</span>();
+    ESP.<span class="fn">deepSleep</span>(<span class="num">0</span>);
+}
+
+<span class="cmt">// Сброс при активности (в Button_Check, Scale_Update и т.д.):</span>
+lastActivityTime = <span class="fn">millis</span>();</code></pre>
+    </div>
+  </div>
+
+  <!-- ── Bug 6 ── -->
+  <div class="card severity-low">
+    <div class="card-header">
+      <div class="card-number">6</div>
+      <div class="card-title">Нет debounce на кнопке <span class="badge badge-low">LOW</span></div>
+    </div>
+    <div class="card-body">
+      <div class="card-location">ButtonControl.h : строка 10</div>
+      <pre><code><span class="kw">void</span> <span class="fn">Button_Check</span>() {
+    <span class="kw">if</span> (<span class="fn">digitalRead</span>(BUTTON_PIN) <span class="op">==</span> LOW) {
+        <span class="typ">long</span> pressTime = <span class="fn">millis</span>();
+        ...</code></pre>
+      <div class="card-text">
+        Отсутствует защита от дребезга контактов (debounce). Механическая кнопка при нажатии
+        генерирует серию быстрых замыканий/размыканий в течение 5&ndash;50 мс. Текущий код
+        частично защищён блокирующим <code>while</code>-циклом при удержании, но первичный
+        <code>digitalRead</code> может <strong>ложно сработать</strong> от электрической помехи
+        или дребезга. Рекомендуется добавить задержку 50 мс после первого обнаружения нажатия.
+      </div>
+      <div class="fix-label">Рекомендуемое исправление</div>
+      <pre class="fix"><code><span class="kw">void</span> <span class="fn">Button_Check</span>() {
+    <span class="kw">if</span> (<span class="fn">digitalRead</span>(BUTTON_PIN) <span class="op">==</span> LOW) {
+        <span class="fn">delay</span>(<span class="num">50</span>); <span class="cmt">// debounce</span>
+        <span class="kw">if</span> (<span class="fn">digitalRead</span>(BUTTON_PIN) <span class="op">!=</span> LOW) <span class="kw">return</span>;
+        <span class="typ">unsigned long</span> pressTime = <span class="fn">millis</span>();
+        ...</code></pre>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ FOOTER ══════════════════════ -->
+  <div class="footer">
+    Bug Report &mdash; Mini Scale &mdash; <a href="https://github.com/darkvolg/Mini_Scale">github.com/darkvolg/Mini_Scale</a>
+  </div>
+
+</div>
+</body>
+</html>
