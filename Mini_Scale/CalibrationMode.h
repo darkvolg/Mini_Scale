@@ -48,9 +48,9 @@ void RunCalibrationMode() {
 
     // Обработка кликов
     if (digitalRead(BUTTON_PIN) == LOW) {
-      long pressTime = millis();
-      while(digitalRead(BUTTON_PIN) == LOW) { delay(10); } 
-      long duration = millis() - pressTime;
+      unsigned long pressTime = millis();
+      while(digitalRead(BUTTON_PIN) == LOW) { delay(10); }
+      unsigned long duration = millis() - pressTime;
 
       if (duration > 800) { 
         menu_mode++; // Длинное нажатие меняет режим

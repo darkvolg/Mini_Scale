@@ -21,7 +21,7 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent)
   // Отображение веса
   display.setTextSize(2);
   display.setCursor(0, 0);
-  if (weight == -99.9) {
+  if (weight < -99.0) {
     display.println("ERROR"); // Если датчик отвалился
   } else {
     display.print(weight, 2); 

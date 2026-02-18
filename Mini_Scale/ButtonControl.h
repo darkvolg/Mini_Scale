@@ -3,16 +3,22 @@
 #include "ScaleControl.h"
 #include "DisplayControl.h"
 
+extern unsigned long lastActivityTime;
+
 void Button_Init() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 }
 
 void Button_Check() {
   if (digitalRead(BUTTON_PIN) == LOW) {
-    long pressTime = millis();
-    
+    delay(50); // debounce
+    if (digitalRead(BUTTON_PIN) != LOW) return;
+
+    lastActivityTime = millis();
+    unsigned long pressTime = millis();
+
     while (digitalRead(BUTTON_PIN) == LOW) {
-      long elapsed = millis() - pressTime;
+      unsigned long elapsed = millis() - pressTime;
       
       if (elapsed > 10000) {
         Display_ShowMessage("Release to UNDO TARE");
@@ -24,7 +30,7 @@ void Button_Check() {
       delay(100);
     }
     
-    long totalElapsed = millis() - pressTime;
+    unsigned long totalElapsed = millis() - pressTime;
     
     if (totalElapsed > 10000) {
       Scale_UndoTare();
