@@ -147,10 +147,16 @@ void loop() {
   Display_ShowMain(current_weight, session_delta, bat_voltage, bat_percent,
                    stable, btnHolding, btnElapsed, batLowBlink);
 
-  // 7. Auto-dim
+  // 7. Periodic EEPROM save (throttled to once per 5 min)
+  if (current_weight > WEIGHT_ERROR_THRESHOLD) {
+    savedData.last_weight = current_weight;
+    Memory_Save();
+  }
+
+  // 8. Auto-dim
   Display_CheckDim(lastActivityTime);
 
-  // 8. Auto power off
+  // 9. Auto power off
   if (millis() - lastActivityTime > AUTO_OFF_MS) {
     Display_ShowMessage("Auto Power Off...");
     delay(AUTO_OFF_MSG_MS);

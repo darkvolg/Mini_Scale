@@ -88,11 +88,13 @@ void Display_Sleep() {
 void Display_Splash(const char* title) {
   display.clearDisplay();
   display.setTextSize(2);
-  // Center text: approx 10 chars * 12px = 120px wide at size 2
-  int16_t x = (SCREEN_WIDTH - 120) / 2;
-  int16_t y = (SCREEN_HEIGHT - 16) / 2 - 8; // Above center to leave room for progress bar
-  if (x < 0) x = 0;
-  display.setCursor(x, y);
+  // Center text using actual measured bounds
+  int16_t x1, y1;
+  uint16_t tw, th;
+  display.getTextBounds(title, 0, 0, &x1, &y1, &tw, &th);
+  int16_t x = (SCREEN_WIDTH - (int16_t)tw) / 2;
+  int16_t y = (SCREEN_HEIGHT - (int16_t)th) / 2 - 8; // Above center for progress bar
+  display.setCursor(x > 0 ? x : 0, y);
   display.println(title);
   display.display();
 }
