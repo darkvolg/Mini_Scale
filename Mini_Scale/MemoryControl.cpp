@@ -35,7 +35,6 @@ void Memory_Init() {
 void Memory_Save() {
   unsigned long now = millis();
   if (now - lastSaveTime < EEPROM_MIN_INTERVAL_MS) {
-    Serial.println(F("EEPROM save throttled"));
     return;
   }
   EEPROM.put(EEPROM_ADDR, savedData);

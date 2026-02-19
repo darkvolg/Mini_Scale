@@ -12,6 +12,7 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
                       bool batLowBlink);
 void Display_ShowMessage(const char* msg);
 void Display_Sleep();
+void Display_Off();
 void Display_Splash(const char* title);
 void Display_Progress(int percent);
 void Display_Dim(bool dim);

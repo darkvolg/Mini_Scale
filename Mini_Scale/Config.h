@@ -44,11 +44,13 @@
 #define BAT_VOLTAGE_REF         3.2f
 #define BAT_LOW_PERCENT         10
 #define BAT_CRITICAL_PERCENT    5
+#define BLINK_INTERVAL_MS       500
 
 // ===================== Weight =====================
 #define WEIGHT_ERROR_FLAG       (-99.9f)
 #define WEIGHT_ERROR_THRESHOLD  (-99.0f)
 #define WEIGHT_CHANGE_THRESHOLD 0.05f
+#define WEIGHT_SANE_MAX         500.0f
 
 // ===================== EEPROM =====================
 #define EEPROM_SIZE             512

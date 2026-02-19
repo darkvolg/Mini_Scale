@@ -4,6 +4,7 @@
 HX711 scale;
 float session_delta = 0.0;
 float current_weight = 0.0;
+bool undoAvailable = false;
 
 // Stability ring buffer
 static float weightHistory[STABILITY_WINDOW];
@@ -61,6 +62,12 @@ bool Scale_Tare() {
     return false;
   }
 
+  // Sanity check: refuse tare if current weight is abnormal
+  if (current_weight < WEIGHT_ERROR_THRESHOLD ||
+      fabs(current_weight) > WEIGHT_SANE_MAX) {
+    return false;
+  }
+
   // Save backup BEFORE modifying anything
   savedData.backup_offset = savedData.tare_offset;
   savedData.backup_last_weight = savedData.last_weight;
@@ -72,6 +79,8 @@ bool Scale_Tare() {
   savedData.last_weight = 0.0;
   Memory_ForceSave();
 
+  undoAvailable = true;
+
   // Reset stability buffer
   weightHistoryIdx = 0;
   weightHistoryFull = false;
@@ -79,6 +88,10 @@ bool Scale_Tare() {
 }
 
 bool Scale_UndoTare() {
+  if (!undoAvailable) {
+    return false;
+  }
+
   savedData.tare_offset = savedData.backup_offset;
   scale.set_offset(savedData.tare_offset);
 
@@ -96,6 +109,8 @@ bool Scale_UndoTare() {
     session_delta = w - savedData.last_weight;
   }
   Memory_ForceSave();
+
+  undoAvailable = false;
 
   // Reset stability buffer
   weightHistoryIdx = 0;

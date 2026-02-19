@@ -85,6 +85,12 @@ void Display_Sleep() {
   display.display();
 }
 
+void Display_Off() {
+  display.clearDisplay();
+  display.display();
+  display.ssd1306_command(SSD1306_DISPLAYOFF);
+}
+
 void Display_Splash(const char* title) {
   display.clearDisplay();
   display.setTextSize(2);
