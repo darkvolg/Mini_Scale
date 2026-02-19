@@ -18,6 +18,7 @@
 // ===================== Timing =====================
 #define DEBOUNCE_MS             50
 #define LOOP_DELAY_MS           100
+#define LOOP_DELAY_IDLE_MS      250
 #define AUTO_OFF_MS             180000UL
 #define AUTO_DIM_MS             30000UL
 #define AUTO_OFF_MSG_MS         2000
@@ -45,12 +46,16 @@
 #define BAT_LOW_PERCENT         10
 #define BAT_CRITICAL_PERCENT    5
 #define BLINK_INTERVAL_MS       500
+#define BAT_READ_INTERVAL_MS    5000UL
 
 // ===================== Weight =====================
 #define WEIGHT_ERROR_FLAG       (-99.9f)
 #define WEIGHT_ERROR_THRESHOLD  (-99.0f)
 #define WEIGHT_CHANGE_THRESHOLD 0.05f
 #define WEIGHT_SANE_MAX         500.0f
+#define WEIGHT_EMA_ALPHA        0.3f
+#define WEIGHT_FREEZE_THRESHOLD 0.02f
+#define HX711_ERROR_COUNT_MAX   3
 
 // ===================== EEPROM =====================
 #define EEPROM_SIZE             512

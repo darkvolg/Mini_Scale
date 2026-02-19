@@ -18,3 +18,4 @@ void Display_Progress(int percent);
 void Display_Dim(bool dim);
 void Display_CheckDim(unsigned long lastActivity);
 void Display_Wake();
+void Display_SmoothWake();

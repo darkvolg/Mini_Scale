@@ -72,10 +72,10 @@ void loop() {
     prevWeight = current_weight;
   }
 
-  // 2. Battery update
+  // 2. Battery update (internally throttled to once per 5s)
   Battery_Update();
 
-  // 3. Critical battery — shutdown (Battery module handles grace period)
+  // 3. Critical battery — shutdown
   if (Battery_IsCritical()) {
     Memory_ForceSave();
     Display_ShowMessage("LOW BATTERY!");
@@ -91,7 +91,7 @@ void loop() {
       showingMessage = false;
     } else {
       delay(LOOP_DELAY_MS);
-      return; // Skip rest of loop while showing message
+      return;
     }
   }
 
@@ -120,17 +120,17 @@ void loop() {
     lastActivityTime = millis();
   }
 
-  // Wake display on button activity
+  // Wake display on button activity (smooth fade-in)
   if (action != BTN_NONE) {
-    Display_Wake();
+    Display_SmoothWake();
   }
 
-  // 6. Display main screen
+  // 6. Display main screen (uses display_weight — filtered and rounded)
   bool stable = Scale_IsStable();
   bool btnHolding = Button_IsHolding();
   unsigned long btnElapsed = Button_HoldElapsed();
 
-  Display_ShowMain(current_weight, session_delta,
+  Display_ShowMain(display_weight, session_delta,
                    Battery_GetVoltage(), Battery_GetPercent(),
                    stable, btnHolding, btnElapsed, Battery_BlinkPhase());
 
@@ -153,5 +153,10 @@ void loop() {
     ESP.deepSleep(0);
   }
 
-  delay(LOOP_DELAY_MS);
+  // 10. Adaptive delay: slower when idle to save power
+  if (Scale_IsIdle() && !Button_IsHolding()) {
+    delay(LOOP_DELAY_IDLE_MS);
+  } else {
+    delay(LOOP_DELAY_MS);
+  }
 }

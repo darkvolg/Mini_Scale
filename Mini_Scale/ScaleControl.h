@@ -6,6 +6,7 @@
 extern HX711 scale;
 extern float session_delta;
 extern float current_weight;
+extern float display_weight;
 extern bool undoAvailable;
 
 void Scale_Init();
@@ -13,3 +14,4 @@ void Scale_Update();
 bool Scale_Tare();
 bool Scale_UndoTare();
 bool Scale_IsStable();
+bool Scale_IsIdle();

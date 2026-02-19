@@ -20,6 +20,60 @@ void Display_Init() {
   display.setTextColor(WHITE);
 }
 
+// Draw battery icon at (x, y), w=24, h=10
+static void drawBatteryIcon(int x, int y, int percent, bool blink) {
+  if (blink) return; // Hidden during blink-off phase
+
+  int w = 24;
+  int h = 10;
+  // Battery body outline
+  display.drawRect(x, y, w, h, WHITE);
+  // Battery tip
+  display.fillRect(x + w, y + 2, 2, h - 4, WHITE);
+  // Fill level
+  int fillW = ((w - 4) * percent) / 100;
+  if (fillW > 0) {
+    display.fillRect(x + 2, y + 2, fillW, h - 4, WHITE);
+  }
+  // Percent text next to icon
+  display.setTextSize(1);
+  display.setCursor(x + w + 5, y + 1);
+  display.print(percent);
+  display.print("%");
+}
+
+// Draw hold progress bar
+static void drawHoldBar(int y, unsigned long elapsed) {
+  int barX = 0;
+  int barW = SCREEN_WIDTH;
+  int barH = 4;
+
+  // Two-stage bar: 0-5s = tare zone, 5-10s = undo zone
+  display.drawRect(barX, y, barW, barH, WHITE);
+
+  int fillW = 0;
+  if (elapsed <= BUTTON_TARE_MS) {
+    fillW = (int)((unsigned long)barW * elapsed / BUTTON_TARE_MS);
+  } else if (elapsed <= BUTTON_UNDO_MS) {
+    // First half full, second half filling
+    int half = barW / 2;
+    int extra = (int)((unsigned long)half * (elapsed - BUTTON_TARE_MS) /
+                      (BUTTON_UNDO_MS - BUTTON_TARE_MS));
+    fillW = half + extra;
+  } else {
+    fillW = barW;
+  }
+
+  if (fillW > barW - 2) fillW = barW - 2;
+  if (fillW > 0) {
+    display.fillRect(barX + 1, y + 1, fillW, barH - 2, WHITE);
+  }
+
+  // Marker at tare threshold (50%)
+  int markerX = barX + barW / 2;
+  display.drawFastVLine(markerX, y, barH, WHITE);
+}
+
 void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
                       bool stable, bool btnHolding, unsigned long btnElapsed,
                       bool batLowBlink) {
@@ -37,17 +91,18 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
     display.println(" kg");
   }
 
-  // Button holding hints
+  // Button holding: progress bar + hint text
   if (btnHolding) {
     display.setTextSize(1);
-    display.setCursor(0, 25);
+    display.setCursor(0, 22);
     if (btnElapsed > BUTTON_UNDO_MS) {
-      display.println("Release to UNDO TARE");
+      display.println("Release: UNDO TARE");
     } else if (btnElapsed > BUTTON_TARE_MS) {
-      display.println("Release to TARE");
+      display.println("Release: TARE");
     } else {
-      display.println("Holding button...");
+      display.println("Holding...");
     }
+    drawHoldBar(34, btnElapsed);
   } else {
     // Session delta
     display.setTextSize(1);
@@ -58,16 +113,22 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
     display.println(" kg");
   }
 
-  // Battery
-  display.setCursor(0, 45);
+  // Battery icon + percentage (bottom-left)
+  drawBatteryIcon(0, 50, bat_percent, batLowBlink);
+
+  // Voltage text (bottom-right)
   if (!batLowBlink) {
-    display.print("Bat: ");
-    display.print(voltage, 2);
-    display.print("V (");
-    display.print(bat_percent);
-    display.println("%)");
+    display.setTextSize(1);
+    // Right-align voltage
+    int16_t x1, y1;
+    uint16_t tw, th;
+    char vBuf[8];
+    dtostrf(voltage, 4, 2, vBuf);
+    strcat(vBuf, "V");
+    display.getTextBounds(vBuf, 0, 0, &x1, &y1, &tw, &th);
+    display.setCursor(SCREEN_WIDTH - tw - 1, 51);
+    display.print(vBuf);
   }
-  // When batLowBlink is true, battery text is hidden (blink off phase)
 
   display.display();
 }
@@ -141,4 +202,18 @@ void Display_Wake() {
   if (displayDimmed) {
     Display_Dim(false);
   }
+}
+
+void Display_SmoothWake() {
+  if (!displayDimmed) return;
+  // 3-step brightness ramp
+  display.ssd1306_command(SSD1306_SETCONTRAST);
+  display.ssd1306_command(0x40);
+  delay(40);
+  display.ssd1306_command(SSD1306_SETCONTRAST);
+  display.ssd1306_command(0x80);
+  delay(40);
+  display.ssd1306_command(SSD1306_SETCONTRAST);
+  display.ssd1306_command(0xCF);
+  displayDimmed = false;
 }

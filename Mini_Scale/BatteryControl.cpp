@@ -2,13 +2,15 @@
 #include <Arduino.h>
 
 static float smoothed_bat_raw = 0;
-static bool bat_first_read = true;
 static float bat_voltage = 0.0;
 static int bat_percent = 0;
 
 // Blink state
 static bool blinkState = false;
 static unsigned long lastBlinkToggle = 0;
+
+// Throttle: read ADC every BAT_READ_INTERVAL_MS
+static unsigned long lastBatRead = 0;
 
 // Grace period: skip critical shutdown for first N loops
 static uint8_t graceLoops = 10;
@@ -27,33 +29,39 @@ static int lipoPercent(float voltage) {
 
 void Battery_Init() {
   smoothed_bat_raw = analogRead(BATTERY_PIN);
-  bat_first_read = false;
+  bat_voltage = (smoothed_bat_raw / BAT_ADC_MAX) * BAT_VOLTAGE_REF;
+  bat_percent = constrain(lipoPercent(bat_voltage), 0, 100);
+  lastBatRead = millis();
 }
 
 void Battery_Update() {
-  int raw = analogRead(BATTERY_PIN);
-  if (bat_first_read) {
-    smoothed_bat_raw = raw;
-    bat_first_read = false;
+  unsigned long now = millis();
+
+  // Grace period countdown every call
+  if (graceLoops > 0) {
+    graceLoops--;
   }
+
+  // Blink toggle every call (~1 Hz)
+  if (bat_percent < BAT_LOW_PERCENT) {
+    if (now - lastBlinkToggle >= BLINK_INTERVAL_MS) {
+      blinkState = !blinkState;
+      lastBlinkToggle = now;
+    }
+  }
+
+  // Throttle ADC reads
+  if (now - lastBatRead < BAT_READ_INTERVAL_MS) {
+    return;
+  }
+  lastBatRead = now;
+
+  int raw = analogRead(BATTERY_PIN);
   smoothed_bat_raw = (smoothed_bat_raw * BAT_EMA_OLD) + (raw * BAT_EMA_NEW);
 
   bat_voltage = (smoothed_bat_raw / BAT_ADC_MAX) * BAT_VOLTAGE_REF;
   bat_percent = lipoPercent(bat_voltage);
   bat_percent = constrain(bat_percent, 0, 100);
-
-  // Grace period countdown
-  if (graceLoops > 0) {
-    graceLoops--;
-  }
-
-  // Blink toggle (~1 Hz)
-  if (bat_percent < BAT_LOW_PERCENT) {
-    if (millis() - lastBlinkToggle >= BLINK_INTERVAL_MS) {
-      blinkState = !blinkState;
-      lastBlinkToggle = millis();
-    }
-  }
 }
 
 float Battery_GetVoltage() {
