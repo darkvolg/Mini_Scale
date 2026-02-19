@@ -55,6 +55,7 @@
 #define EEPROM_ADDR             0
 #define MAGIC_NUMBER            0x2A2B3CUL
 #define CAL_FACTOR_MIN          1.0f
+#define CAL_FACTOR_MAX          100000.0f
 
 // ===================== Stability =====================
 #define STABILITY_WINDOW        8

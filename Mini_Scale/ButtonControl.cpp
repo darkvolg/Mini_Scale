@@ -27,7 +27,7 @@ ButtonAction Button_Update() {
       }
       if (pressed) {
         // Confirmed press after debounce
-        btnPressTime = btnDebounceTime;
+        btnPressTime = now;
         btnState = BTN_HOLDING;
         lastActivityTime = now;
         return BTN_SHOW_HINT;
@@ -51,6 +51,11 @@ ButtonAction Button_Update() {
       if (now - btnDebounceTime < DEBOUNCE_MS) {
         return BTN_NONE; // Still debouncing release
       }
+      if (pressed) {
+        // Button bounced back to LOW — return to holding
+        btnState = BTN_HOLDING;
+        return BTN_SHOW_HINT;
+      }
       unsigned long elapsed = now - btnPressTime;
       btnState = BTN_IDLE;
       lastActivityTime = now;
@@ -67,7 +72,7 @@ ButtonAction Button_Update() {
 }
 
 bool Button_IsHolding() {
-  return (btnState == BTN_HOLDING || btnState == BTN_PRESSED);
+  return (btnState == BTN_HOLDING);
 }
 
 unsigned long Button_HoldElapsed() {

@@ -107,15 +107,14 @@ void Display_Progress(int percent) {
   int barHeight = 8;
   int barMargin = 10;
   int barWidth = SCREEN_WIDTH - barMargin * 2;
-  int fillWidth = (barWidth * percent) / 100;
-
   // Clear only the progress bar area
   display.fillRect(barMargin, barY, barWidth, barHeight, BLACK);
   // Draw outline
   display.drawRect(barMargin, barY, barWidth, barHeight, WHITE);
-  // Draw fill
-  if (fillWidth > 0) {
-    display.fillRect(barMargin, barY, fillWidth, barHeight, WHITE);
+  // Draw fill inside the outline
+  int innerWidth = ((barWidth - 2) * percent) / 100;
+  if (innerWidth > 0) {
+    display.fillRect(barMargin + 1, barY + 1, innerWidth, barHeight - 2, WHITE);
   }
   display.display();
 }

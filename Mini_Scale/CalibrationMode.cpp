@@ -4,6 +4,7 @@
 #include "ScaleControl.h"
 #include "DisplayControl.h"
 #include <Arduino.h>
+#include <math.h>
 
 void RunCalibrationMode() {
   display.clearDisplay();
@@ -14,7 +15,7 @@ void RunCalibrationMode() {
   display.display();
 
   // Wait for button release
-  while (digitalRead(BUTTON_PIN) == LOW) { delay(10); }
+  while (digitalRead(BUTTON_PIN) == LOW) { ESP.wdtFeed(); delay(10); }
   delay(DEBOUNCE_MS);
 
   int menu_mode = 0; // 0=+10, 1=-10, 2=+1, 3=-1, 4=SAVE
@@ -27,7 +28,10 @@ void RunCalibrationMode() {
     scale.set_scale(current_factor);
     float w = 0.0;
     if (scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
-      w = scale.get_units(HX711_SAMPLES_CAL);
+      float raw = scale.get_units(HX711_SAMPLES_CAL);
+      if (!isnan(raw) && !isinf(raw)) {
+        w = raw;
+      }
     }
 
     display.clearDisplay();
@@ -46,11 +50,11 @@ void RunCalibrationMode() {
 
     // Controls
     display.setCursor(0, 45);
-    if (menu_mode == 0)      { display.println("[Hold] Next Mode"); display.print("[Click] + 10"); }
-    else if (menu_mode == 1) { display.println("[Hold] Next Mode"); display.print("[Click] - 10"); }
-    else if (menu_mode == 2) { display.println("[Hold] Next Mode"); display.print("[Click] + 1"); }
-    else if (menu_mode == 3) { display.println("[Hold] Next Mode"); display.print("[Click] - 1"); }
-    else if (menu_mode == 4) { display.println("[Hold] Next Mode"); display.print("[Click] SAVE & EXIT"); }
+    if (menu_mode == 0)      { display.println("Hold=Next Click=+10"); }
+    else if (menu_mode == 1) { display.println("Hold=Next Click=-10"); }
+    else if (menu_mode == 2) { display.println("Hold=Next Click=+1"); }
+    else if (menu_mode == 3) { display.println("Hold=Next Click=-1"); }
+    else if (menu_mode == 4) { display.println("Hold=Next Click=SAVE"); }
 
     display.display();
 
@@ -89,6 +93,7 @@ void RunCalibrationMode() {
         }
 
         if (current_factor < CAL_FACTOR_MIN) current_factor = CAL_FACTOR_MIN;
+        if (current_factor > CAL_FACTOR_MAX) current_factor = CAL_FACTOR_MAX;
       }
     }
   }

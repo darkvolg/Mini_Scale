@@ -18,6 +18,13 @@ static float prevWeight = 0.0;
 
 // Low battery blink state
 static bool blinkState = false;
+static unsigned long lastBlinkToggle = 0;
+#define BLINK_INTERVAL_MS 500
+
+// Non-blocking message display
+static bool showingMessage = false;
+static unsigned long messageStartTime = 0;
+static char messageText[32] = "";
 
 // Battery grace period: skip critical shutdown for first N loops
 static uint8_t batGraceLoops = 10;
@@ -103,28 +110,45 @@ void loop() {
     batGraceLoops--;
   } else if (bat_percent <= BAT_CRITICAL_PERCENT) {
     Display_ShowMessage("LOW BATTERY!");
+    ESP.wdtFeed();
     delay(AUTO_OFF_MSG_MS);
     Display_Sleep();
     ESP.deepSleep(0);
   }
 
-  // 4. Non-blocking button state machine
+  // 4. Non-blocking message timeout
+  if (showingMessage) {
+    if (millis() - messageStartTime >= SUCCESS_MSG_MS) {
+      showingMessage = false;
+    } else {
+      delay(LOOP_DELAY_MS);
+      return; // Skip rest of loop while showing message
+    }
+  }
+
+  // 5. Non-blocking button state machine
   ButtonAction action = Button_Update();
 
   if (action == BTN_TARE) {
     if (Scale_Tare()) {
-      Display_ShowMessage("TARE SUCCESS!");
+      strncpy(messageText, "TARE SUCCESS!", sizeof(messageText));
     } else {
-      Display_ShowMessage("TARE FAILED!");
+      strncpy(messageText, "TARE FAILED!", sizeof(messageText));
     }
-    delay(SUCCESS_MSG_MS);
+    Display_ShowMessage(messageText);
+    showingMessage = true;
+    messageStartTime = millis();
+    lastActivityTime = millis();
   } else if (action == BTN_UNDO) {
     if (Scale_UndoTare()) {
-      Display_ShowMessage("UNDO SUCCESS!");
+      strncpy(messageText, "UNDO SUCCESS!", sizeof(messageText));
     } else {
-      Display_ShowMessage("UNDO FAILED!");
+      strncpy(messageText, "UNDO FAILED!", sizeof(messageText));
     }
-    delay(SUCCESS_MSG_MS);
+    Display_ShowMessage(messageText);
+    showingMessage = true;
+    messageStartTime = millis();
+    lastActivityTime = millis();
   }
 
   // Wake display on button activity
@@ -132,14 +156,17 @@ void loop() {
     Display_Wake();
   }
 
-  // 5. Low battery blink toggle
+  // 6. Low battery blink toggle (~1 Hz)
   bool batLowBlink = false;
   if (bat_percent < BAT_LOW_PERCENT) {
-    blinkState = !blinkState;
+    if (millis() - lastBlinkToggle >= BLINK_INTERVAL_MS) {
+      blinkState = !blinkState;
+      lastBlinkToggle = millis();
+    }
     batLowBlink = blinkState;
   }
 
-  // 6. Display main screen
+  // 7. Display main screen
   bool stable = Scale_IsStable();
   bool btnHolding = Button_IsHolding();
   unsigned long btnElapsed = Button_HoldElapsed();
@@ -147,18 +174,19 @@ void loop() {
   Display_ShowMain(current_weight, session_delta, bat_voltage, bat_percent,
                    stable, btnHolding, btnElapsed, batLowBlink);
 
-  // 7. Periodic EEPROM save (throttled to once per 5 min)
+  // 8. Periodic EEPROM save (throttled to once per 5 min)
   if (current_weight > WEIGHT_ERROR_THRESHOLD) {
     savedData.last_weight = current_weight;
     Memory_Save();
   }
 
-  // 8. Auto-dim
+  // 9. Auto-dim
   Display_CheckDim(lastActivityTime);
 
-  // 9. Auto power off
+  // 10. Auto power off
   if (millis() - lastActivityTime > AUTO_OFF_MS) {
     Display_ShowMessage("Auto Power Off...");
+    ESP.wdtFeed();
     delay(AUTO_OFF_MSG_MS);
     Display_Sleep();
     ESP.deepSleep(0);

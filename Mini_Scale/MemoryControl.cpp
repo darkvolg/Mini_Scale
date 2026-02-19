@@ -11,6 +11,7 @@ void Memory_Init() {
 
   if (savedData.magic_key != MAGIC_NUMBER ||
       isnan(savedData.last_weight) ||
+      isinf(savedData.last_weight) ||
       isnan(savedData.cal_factor) ||
       isinf(savedData.cal_factor) ||
       savedData.cal_factor < CAL_FACTOR_MIN) {
