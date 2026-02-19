@@ -122,7 +122,7 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
     // Right-align voltage
     int16_t x1, y1;
     uint16_t tw, th;
-    char vBuf[8];
+    char vBuf[10];
     dtostrf(voltage, 4, 2, vBuf);
     strcat(vBuf, "V");
     display.getTextBounds(vBuf, 0, 0, &x1, &y1, &tw, &th);
@@ -138,11 +138,6 @@ void Display_ShowMessage(const char* msg) {
   display.setTextSize(1);
   display.setCursor(0, 25);
   display.println(msg);
-  display.display();
-}
-
-void Display_Sleep() {
-  display.clearDisplay();
   display.display();
 }
 

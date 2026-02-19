@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git push:*)",
+      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch:*)",
+      "Bash(git update-ref:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \"C:/Users/Exploed/Scripts/Setup-Task.ps1\")",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \"C:/Users/Exploed/Scripts/Sort-Downloads.ps1\")",
+      "Bash(powershell.exe -Command \"[System.IO.File]::WriteAllText\\(''C:\\\\Users\\\\Exploed\\\\Scripts\\\\Sort-Downloads.ps1'', @'':*)",
+      "Bash(while read ref)",
+      "Bash(do git update-ref -d \"$ref\")",
+      "Bash(done)",
+      "Bash(gh api:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(echo:*)"
+    ]
+  }
+}
