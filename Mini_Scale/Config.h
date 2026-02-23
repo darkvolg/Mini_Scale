@@ -1,75 +1,85 @@
 #pragma once
 
-// ===================== Pin Configuration =====================
-#define DOUT_PIN D6
-#define SCK_PIN D5
-#define BUTTON_PIN D3
-#define BATTERY_PIN A0
+// ===================== Конфигурация пинов =====================
+#define DOUT_PIN D6          // Пин данных HX711
+#define SCK_PIN D5           // Пин тактового сигнала HX711
+#define BUTTON_PIN D3        // Пин кнопки (с подтяжкой к питанию)
+#define BATTERY_PIN A0       // Аналоговый пин для измерения напряжения батареи
 
-// ===================== Display =====================
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-#define OLED_I2C_ADDR 0x3C
-#define OLED_RESET_PIN (-1)
+// ===================== Дисплей =====================
+#define SCREEN_WIDTH 128     // Ширина OLED-дисплея в пикселях
+#define SCREEN_HEIGHT 64     // Высота OLED-дисплея в пикселях
+#define OLED_I2C_ADDR 0x3C   // I2C-адрес дисплея SSD1306
+#define OLED_RESET_PIN (-1)  // Пин сброса дисплея (-1 = не используется)
 
-// ===================== Scale defaults =====================
-#define DEFAULT_CALIBRATION 2280.0f
+// ===================== Яркость дисплея =====================
+#define DIM_BRIGHTNESS        0x00   // Яркость в режиме затухания (минимальная)
+#define NORMAL_BRIGHTNESS     0xCF   // Яркость в нормальном режиме (максимальная)
+#define DIM_FADE_STEPS        8      // Количество шагов плавного затухания
+#define DIM_FADE_STEP_MS      60     // Задержка между шагами затухания (мс)
+#define WAKE_FADE_STEPS       3      // Количество шагов плавного пробуждения
+#define WAKE_FADE_STEP_MS     40     // Задержка между шагами пробуждения (мс)
 
-// ===================== Timing =====================
-#define DEBOUNCE_MS             50
-#define LOOP_DELAY_MS           100
-#define LOOP_DELAY_IDLE_MS      250
-#define AUTO_OFF_MS             180000UL
-#define AUTO_DIM_MS             30000UL
-#define AUTO_OFF_MSG_MS         2000
-#define CAL_ENTRY_WINDOW_MS     1000UL
-#define CAL_LONG_PRESS_MS       800
-#define CAL_SAVED_MSG_MS        2000
-#define BUTTON_TARE_MS          5000UL
-#define BUTTON_UNDO_MS          10000UL
-#define SUCCESS_MSG_MS          2000
-#define HX711_INIT_DELAY_MS     500
-#define HX711_TIMEOUT_MS        500
+// ===================== Версия прошивки =====================
+#define FIRMWARE_VERSION        2    // Версия формата данных EEPROM
 
-// ===================== HX711 samples =====================
-#define HX711_SAMPLES_STARTUP   10
-#define HX711_SAMPLES_READ      3
-#define HX711_SAMPLES_TARE      10
-#define HX711_SAMPLES_UNDO      5
-#define HX711_SAMPLES_CAL       3
+// ===================== Параметры весов по умолчанию =====================
+#define DEFAULT_CALIBRATION 2280.0f  // Калибровочный коэффициент по умолчанию
 
-// ===================== Battery =====================
-#define BAT_EMA_OLD             0.9f
-#define BAT_EMA_NEW             0.1f
-#define BAT_ADC_MAX             1023.0f
-#define BAT_VOLTAGE_REF         3.2f
-#define BAT_LOW_PERCENT         10
-#define BAT_CRITICAL_PERCENT    5
-#define BLINK_INTERVAL_MS       500
-#define BAT_READ_INTERVAL_MS    5000UL
+// ===================== Таймеры и задержки =====================
+#define DEBOUNCE_MS             50       // Антидребезг кнопки (мс)
+#define LOOP_DELAY_MS           100      // Задержка основного цикла (мс)
+#define LOOP_DELAY_IDLE_MS      250      // Задержка цикла в режиме ожидания (мс)
+#define AUTO_OFF_MS             180000UL // Авто-выключение через 3 минуты бездействия
+#define AUTO_DIM_MS             60000UL  // Затухание дисплея через 60 секунд бездействия
+#define AUTO_OFF_MSG_MS         7000     // Время показа сообщения перед выключением (мс)
+#define CAL_ENTRY_WINDOW_MS     1000UL   // Окно входа в режим калибровки при запуске (мс)
+#define CAL_LONG_PRESS_MS       800      // Длительное нажатие для переключения режима калибровки (мс)
+#define CAL_SAVED_MSG_MS        2000     // Время показа сообщения "Сохранено" (мс)
+#define BUTTON_TARE_MS          5000UL   // Удержание кнопки для тарирования (5 секунд)
+#define BUTTON_UNDO_MS          10000UL  // Удержание кнопки для отмены тарирования (10 секунд)
+#define SUCCESS_MSG_MS          2000     // Время показа сообщения об успешной операции (мс)
+#define HX711_INIT_DELAY_MS     500      // Задержка инициализации HX711 (мс)
+#define HX711_TIMEOUT_MS        500      // Таймаут ожидания готовности HX711 (мс)
 
-// ===================== Weight =====================
-#define WEIGHT_ERROR_FLAG       (-99.9f)
-#define WEIGHT_ERROR_THRESHOLD  (-99.0f)
-#define WEIGHT_CHANGE_THRESHOLD 0.05f
-#define WEIGHT_SANE_MAX         500.0f
-#define WEIGHT_EMA_ALPHA        0.3f
-#define WEIGHT_FREEZE_THRESHOLD 0.02f
-#define HX711_ERROR_COUNT_MAX   3
+// ===================== Количество выборок HX711 =====================
+#define HX711_SAMPLES_STARTUP   10  // Выборки при запуске (для точного начального значения)
+#define HX711_SAMPLES_READ      3   // Выборки при обычном чтении
+#define HX711_SAMPLES_TARE      10  // Выборки при тарировании
+#define HX711_SAMPLES_UNDO      5   // Выборки при отмене тарирования
+#define HX711_SAMPLES_CAL       3   // Выборки в режиме калибровки
+
+// ===================== Батарея =====================
+#define BAT_EMA_OLD             0.9f     // Вес старого значения в EMA-фильтре батареи
+#define BAT_EMA_NEW             0.1f     // Вес нового значения в EMA-фильтре батареи
+#define BAT_ADC_MAX             1023.0f  // Максимальное значение АЦП (10 бит)
+#define BAT_VOLTAGE_REF         3.2f     // Опорное напряжение для расчёта (вольт)
+#define BAT_LOW_PERCENT         10       // Порог низкого заряда (%) — начинает мигать иконка
+#define BAT_CRITICAL_PERCENT    5        // Порог критического заряда (%)
+#define BLINK_INTERVAL_MS       1500     // Интервал мигания иконки батареи (мс)
+#define BAT_READ_INTERVAL_MS    5000UL   // Интервал чтения АЦП батареи (мс)
+
+// ===================== Вес =====================
+#define WEIGHT_ERROR_FLAG       (-99.9f) // Флаг ошибки чтения веса
+#define WEIGHT_ERROR_THRESHOLD  (-99.0f) // Порог определения ошибки
+#define WEIGHT_CHANGE_THRESHOLD 0.05f    // Порог значимого изменения веса (кг)
+#define WEIGHT_SANE_MAX         500.0f   // Максимально допустимый вес (кг)
+#define WEIGHT_EMA_ALPHA        0.3f     // Коэффициент EMA-фильтра веса (0..1)
+#define WEIGHT_FREEZE_THRESHOLD 0.02f    // Порог заморозки показаний на дисплее (кг)
+#define HX711_ERROR_COUNT_MAX   3        // Макс. подряд ошибок до отображения "ERROR"
 
 // ===================== EEPROM =====================
-#define EEPROM_SIZE             512
-#define EEPROM_ADDR             0
-#define MAGIC_NUMBER            0x2A2B3CUL
-#define CAL_FACTOR_MIN          1.0f
-#define CAL_FACTOR_MAX          100000.0f
+#define EEPROM_SLOTS            4            // Количество слотов износовыравнивания
+#define MAGIC_NUMBER            0x2A2B3CUL   // Магическое число для проверки целостности данных
+#define CAL_FACTOR_MIN          1.0f         // Минимальный калибровочный коэффициент
+#define CAL_FACTOR_MAX          100000.0f    // Максимальный калибровочный коэффициент
 
-// ===================== Stability =====================
-#define STABILITY_WINDOW        8
-#define STABILITY_THRESHOLD     0.03f
+// ===================== Стабильность показаний =====================
+#define STABILITY_WINDOW        8      // Размер кольцевого буфера для оценки стабильности
+#define STABILITY_THRESHOLD     0.03f  // Порог стабильности (макс. разброс в буфере, кг)
 
-// ===================== Serial =====================
-#define SERIAL_BAUD             115200
+// ===================== Последовательный порт =====================
+#define SERIAL_BAUD             115200  // Скорость последовательного порта
 
-// ===================== EEPROM write limit =====================
-#define EEPROM_MIN_INTERVAL_MS  300000UL  // 5 minutes
+// ===================== Ограничение записи EEPROM =====================
+#define EEPROM_MIN_INTERVAL_MS  300000UL  // Минимальный интервал записи в EEPROM (5 минут)

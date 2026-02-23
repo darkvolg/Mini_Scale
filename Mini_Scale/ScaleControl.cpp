@@ -1,29 +1,38 @@
 #include "ScaleControl.h"
 #include <math.h>
 
+// Глобальные переменные — доступны из других модулей
 HX711 scale;
-float session_delta = 0.0;
-float current_weight = 0.0;
-float display_weight = 0.0;
-bool undoAvailable = false;
+float session_delta = 0.0;   // Разница веса от начала сессии
+float current_weight = 0.0;  // Текущий отфильтрованный вес
+float display_weight = 0.0;  // Вес для отображения (заморожен при стабильности)
+bool undoAvailable = false;  // Флаг доступности отмены тарирования
 
-// Stability ring buffer
+// ===== Кольцевой буфер стабильности =====
+// Хранит последние STABILITY_WINDOW значений веса.
+// Если разброс (макс - мин) меньше STABILITY_THRESHOLD — вес стабилен.
 static float weightHistory[STABILITY_WINDOW];
 static uint8_t weightHistoryIdx = 0;
 static bool weightHistoryFull = false;
 
-// EMA filtered weight
+// ===== EMA-фильтр веса =====
+// Экспоненциальное скользящее среднее для сглаживания шума датчика.
+// Коэффициент WEIGHT_EMA_ALPHA определяет отзывчивость фильтра.
 static float filteredWeight = 0.0;
 static bool filterInitialized = false;
 
-// Frozen display weight
+// ===== Заморозка показаний на дисплее =====
+// Когда вес стабилен — показания "замораживаются" и не дёргаются.
+// Размораживаются, когда вес изменился больше WEIGHT_FREEZE_THRESHOLD.
 static float frozenWeight = 0.0;
 static bool isFrozen = false;
 
-// Error counter for consecutive HX711 failures
+// ===== Счётчик ошибок HX711 =====
+// При нескольких подряд ошибках чтения — отображаем "ERROR".
 static uint8_t errorCount = 0;
 static float lastValidWeight = 0.0;
 
+// Добавить значение в кольцевой буфер стабильности
 static void stabilityPush(float w) {
   weightHistory[weightHistoryIdx] = w;
   weightHistoryIdx = (weightHistoryIdx + 1) % STABILITY_WINDOW;
@@ -32,11 +41,14 @@ static void stabilityPush(float w) {
   }
 }
 
-// Round to 2 decimal places
+// Округление веса до 2 знаков после запятой
 static float roundWeight(float w) {
   return round(w * 100.0f) / 100.0f;
 }
 
+// ===== Инициализация датчика веса =====
+// Настраивает HX711 с сохранёнными калибровочным коэффициентом и смещением тары.
+// Считывает начальный вес, вычисляет дельту сессии (разницу с последним сохранённым).
 void Scale_Init() {
   scale.begin(DOUT_PIN, SCK_PIN);
   scale.set_scale(savedData.cal_factor);
@@ -44,21 +56,30 @@ void Scale_Init() {
 
   delay(HX711_INIT_DELAY_MS);
 
+  // Проверяем готовность HX711
   if (!scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
-    Serial.println(F("HX711 not ready at startup"));
+    Serial.println(F("HX711: не готов при запуске"));
     current_weight = WEIGHT_ERROR_FLAG;
     display_weight = WEIGHT_ERROR_FLAG;
     return;
   }
 
+  // Считываем начальный вес (больше выборок для точности)
   float startup_weight = scale.get_units(HX711_SAMPLES_STARTUP);
   if (isnan(startup_weight) || isinf(startup_weight)) {
     startup_weight = 0.0;
   }
-  session_delta = startup_weight - savedData.last_weight;
-  savedData.last_weight = startup_weight;
-  Memory_ForceSave();
 
+  // Вычисляем дельту сессии: текущий вес минус последний сохранённый
+  session_delta = startup_weight - savedData.last_weight;
+
+  // Сохраняем в EEPROM только если вес изменился значительно (#7)
+  if (fabs(startup_weight - savedData.last_weight) > WEIGHT_CHANGE_THRESHOLD) {
+    savedData.last_weight = startup_weight;
+    Memory_ForceSave();
+  }
+
+  // Инициализация фильтра и начальных значений
   filteredWeight = startup_weight;
   filterInitialized = true;
   lastValidWeight = startup_weight;
@@ -66,17 +87,23 @@ void Scale_Init() {
   display_weight = roundWeight(startup_weight);
 }
 
+// ===== Обновление показаний веса =====
+// Вызывается каждый цикл loop(). Читает данные с HX711,
+// применяет EMA-фильтр, обновляет буфер стабильности
+// и управляет заморозкой показаний на дисплее.
 void Scale_Update() {
+  // Проверяем готовность HX711
   if (!scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
     errorCount++;
     if (errorCount >= HX711_ERROR_COUNT_MAX) {
       current_weight = WEIGHT_ERROR_FLAG;
       display_weight = WEIGHT_ERROR_FLAG;
     }
-    // Keep last valid weight for fewer errors
+    // При единичной ошибке — сохраняем последний корректный вес
     return;
   }
 
+  // Чтение веса с датчика
   float raw = scale.get_units(HX711_SAMPLES_READ);
   if (isnan(raw) || isinf(raw)) {
     errorCount++;
@@ -87,11 +114,11 @@ void Scale_Update() {
     return;
   }
 
-  // Valid reading — reset error counter
+  // Корректное чтение — сбрасываем счётчик ошибок
   errorCount = 0;
   lastValidWeight = raw;
 
-  // EMA filter
+  // Применение EMA-фильтра для сглаживания показаний
   if (!filterInitialized) {
     filteredWeight = raw;
     filterInitialized = true;
@@ -102,14 +129,16 @@ void Scale_Update() {
   current_weight = filteredWeight;
   stabilityPush(filteredWeight);
 
-  // Auto-freeze: lock display when stable
+  // Авто-заморозка: фиксируем показания при стабильном весе,
+  // чтобы цифры не дёргались на дисплее
   float rounded = roundWeight(filteredWeight);
   if (isFrozen) {
+    // Размораживаем, если вес изменился значительно
     if (fabs(rounded - frozenWeight) > WEIGHT_FREEZE_THRESHOLD) {
       isFrozen = false;
       display_weight = rounded;
     }
-    // else: keep frozen value
+    // Иначе — продолжаем показывать замороженное значение
   } else {
     display_weight = rounded;
     if (Scale_IsStable()) {
@@ -119,32 +148,38 @@ void Scale_Update() {
   }
 }
 
+// ===== Тарирование (обнуление) весов =====
+// Устанавливает текущий вес как ноль. Сохраняет резервную копию
+// смещения и веса для возможности отмены (Undo).
+// Возвращает true при успехе, false при ошибке.
 bool Scale_Tare() {
   if (!scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
     current_weight = WEIGHT_ERROR_FLAG;
     return false;
   }
 
-  // Sanity check: refuse tare if current weight is abnormal
+  // Проверка адекватности: отказываем, если текущий вес аномальный
   if (current_weight < WEIGHT_ERROR_THRESHOLD ||
       fabs(current_weight) > WEIGHT_SANE_MAX) {
     return false;
   }
 
-  // Save backup BEFORE modifying anything
+  // Сохраняем резервную копию ДО изменений (для отмены)
   savedData.backup_offset = savedData.tare_offset;
   savedData.backup_last_weight = savedData.last_weight;
 
+  // Выполняем тарирование
   scale.tare(HX711_SAMPLES_TARE);
   savedData.tare_offset = scale.get_offset();
 
+  // Сброс дельты сессии и сохранение в EEPROM
   session_delta = 0.0;
   savedData.last_weight = 0.0;
   Memory_ForceSave();
 
   undoAvailable = true;
 
-  // Reset filter and stability
+  // Сброс фильтра, стабильности и заморозки
   filteredWeight = 0.0;
   isFrozen = false;
   display_weight = 0.0;
@@ -154,15 +189,19 @@ bool Scale_Tare() {
   return true;
 }
 
+// ===== Отмена тарирования =====
+// Восстанавливает смещение тары и вес из резервной копии.
+// Возвращает true при успехе, false если отмена недоступна.
 bool Scale_UndoTare() {
   if (!undoAvailable) {
     return false;
   }
 
+  // Восстановление смещения тары из резервной копии
   savedData.tare_offset = savedData.backup_offset;
   scale.set_offset(savedData.tare_offset);
 
-  // Restore last_weight from before tare
+  // Восстановление последнего сохранённого веса
   savedData.last_weight = savedData.backup_last_weight;
 
   if (!scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
@@ -171,6 +210,7 @@ bool Scale_UndoTare() {
     return false;
   }
 
+  // Считываем вес с восстановленным смещением
   float w = scale.get_units(HX711_SAMPLES_UNDO);
   if (!isnan(w) && !isinf(w)) {
     session_delta = w - savedData.last_weight;
@@ -182,13 +222,16 @@ bool Scale_UndoTare() {
   undoAvailable = false;
   isFrozen = false;
 
-  // Reset stability buffer
+  // Сброс буфера стабильности
   weightHistoryIdx = 0;
   weightHistoryFull = false;
   errorCount = 0;
   return true;
 }
 
+// ===== Проверка стабильности показаний =====
+// Анализирует кольцевой буфер: если разброс значений (макс - мин)
+// меньше STABILITY_THRESHOLD — показания считаются стабильными.
 bool Scale_IsStable() {
   uint8_t count = weightHistoryFull ? STABILITY_WINDOW : weightHistoryIdx;
   if (count < 2) return false;
@@ -202,6 +245,14 @@ bool Scale_IsStable() {
   return (maxVal - minVal) < STABILITY_THRESHOLD;
 }
 
+// ===== Проверка режима ожидания =====
+// Весы в режиме ожидания, если показания стабильны и нет ошибок HX711.
 bool Scale_IsIdle() {
   return Scale_IsStable() && (errorCount == 0);
+}
+
+// ===== Проверка заморозки показаний =====
+// Возвращает true, если показания на дисплее заморожены (стабильный вес).
+bool Scale_IsFrozen() {
+  return isFrozen;
 }
