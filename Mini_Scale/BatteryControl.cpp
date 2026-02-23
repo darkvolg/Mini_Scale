@@ -16,8 +16,10 @@ static unsigned long lastBlinkToggle = 0;
 static unsigned long lastBatRead = 0;
 
 // Период отсрочки: пропускаем критическое отключение первые N циклов,
-// чтобы АЦП успел стабилизироваться после включения
-static uint8_t graceLoops = 10;
+// чтобы АЦП успел стабилизироваться после включения.
+// При BAT_READ_INTERVAL_MS=5000 и loop=100мс нужно минимум 50 циклов
+// до первого реального чтения + запас. Ставим 80 (~8 секунд).
+static uint8_t graceLoops = 80;
 
 // ===== Кусочно-линейная аппроксимация: напряжение LiPo -> процент =====
 // Таблица соответствия напряжения литий-полимерного аккумулятора
@@ -37,7 +39,7 @@ static int lipoPercent(float voltage) {
 // Считывает начальное значение АЦП и вычисляет напряжение/процент.
 void Battery_Init() {
   smoothed_bat_raw = analogRead(BATTERY_PIN);
-  bat_voltage = (smoothed_bat_raw / BAT_ADC_MAX) * BAT_VOLTAGE_REF;
+  bat_voltage = (smoothed_bat_raw / BAT_ADC_MAX) * BAT_VOLTAGE_REF / BAT_DIVIDER_RATIO;
   bat_percent = constrain(lipoPercent(bat_voltage), 0, 100);
   lastBatRead = millis();
 }
@@ -72,8 +74,8 @@ void Battery_Update() {
   int raw = analogRead(BATTERY_PIN);
   smoothed_bat_raw = (smoothed_bat_raw * BAT_EMA_OLD) + (raw * BAT_EMA_NEW);
 
-  // Пересчёт напряжения и процента заряда
-  bat_voltage = (smoothed_bat_raw / BAT_ADC_MAX) * BAT_VOLTAGE_REF;
+  // Пересчёт напряжения и процента заряда с учётом делителя напряжения
+  bat_voltage = (smoothed_bat_raw / BAT_ADC_MAX) * BAT_VOLTAGE_REF / BAT_DIVIDER_RATIO;
   bat_percent = lipoPercent(bat_voltage);
   bat_percent = constrain(bat_percent, 0, 100);
 }
@@ -96,8 +98,12 @@ bool Battery_IsLow() {
 // Проверка: заряд критически низкий?
 // Возвращает true только после окончания периода отсрочки (graceLoops),
 // чтобы не отключить устройство из-за нестабильного АЦП при запуске.
+// Дополнительно: если ADC < 50 (напряжение < ~0.16V) — батарея не подключена,
+// игнорируем критическое состояние.
 bool Battery_IsCritical() {
-  return (graceLoops == 0) && (bat_percent <= BAT_CRITICAL_PERCENT);
+  if (graceLoops > 0) return false;
+  if (smoothed_bat_raw < BAT_MIN_ADC_CONNECTED) return false; // батарея не подключена
+  return (bat_percent <= BAT_CRITICAL_PERCENT);
 }
 
 // Текущая фаза мигания иконки батареи.

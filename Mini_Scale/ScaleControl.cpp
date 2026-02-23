@@ -135,6 +135,16 @@ void Scale_Update() {
   }
 
   // Корректное чтение — сбрасываем счётчик ошибок
+  if (errorCount >= HX711_ERROR_COUNT_MAX) {
+    // Восстановление из состояния ERROR: сбрасываем буферы,
+    // чтобы мусорные данные не влияли на стабильность и фильтр
+    weightHistoryIdx = 0;
+    weightHistoryFull = false;
+    medianCount = 0;
+    medianIdx = 0;
+    filterInitialized = false;
+    DEBUG_PRINTLN(F("HX711: восстановление из ERROR, сброс буферов"));
+  }
   errorCount = 0;
   lastValidWeight = raw;
 
