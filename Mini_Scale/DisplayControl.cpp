@@ -12,14 +12,15 @@ enum FadeState {
 
 static FadeState fadeState = FADE_IDLE;
 static bool displayDimmed = false;
-static uint8_t fadeBrightness = NORMAL_BRIGHTNESS;  // Текущая яркость
-static int fadeStepsLeft = 0;                        // Оставшиеся шаги
-static unsigned long lastFadeStepTime = 0;           // Время последнего шага
+static uint8_t currentNormalBrightness = NORMAL_BRIGHTNESS; // Настраиваемая яркость
+static uint8_t fadeBrightness = NORMAL_BRIGHTNESS;          // Текущая яркость
+static int fadeStepsLeft = 0;                                // Оставшиеся шаги
+static unsigned long lastFadeStepTime = 0;                   // Время последнего шага
 
 // ===== Инициализация дисплея =====
 void Display_Init() {
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR)) {
-    Serial.println(F("SSD1306: ошибка инициализации"));
+    DEBUG_PRINTLN(F("SSD1306: ошибка инициализации"));
     pinMode(LED_BUILTIN, OUTPUT);
     for (int i = 0; i < 5; i++) {
       digitalWrite(LED_BUILTIN, LOW);
@@ -54,21 +55,15 @@ static void drawBatteryIcon(int x, int y, int percent, bool blink) {
   display.print("%");
 }
 
-// ===== Прогресс-бар удержания кнопки (#2) =====
-// Зона тарирования заполняет первую половину (0..barW/2),
-// зона отмены — вторую половину (barW/2..barW).
+// ===== Прогресс-бар удержания кнопки =====
 static void drawHoldBar(int y, unsigned long elapsed) {
   int barX = 0;
   int barW = SCREEN_WIDTH;
   int barH = 4;
   int half = barW / 2;
 
-  // Контур прогресс-бара
   display.drawRect(barX, y, barW, barH, WHITE);
 
-  // Вычисление заполнения:
-  // 0..5с — заполняет первую половину (зона тарирования)
-  // 5..10с — заполняет вторую половину (зона отмены)
   int fillW = 0;
   if (elapsed <= BUTTON_TARE_MS) {
     fillW = (int)((unsigned long)half * elapsed / BUTTON_TARE_MS);
@@ -80,37 +75,83 @@ static void drawHoldBar(int y, unsigned long elapsed) {
     fillW = barW;
   }
 
-  // Ограничение и отрисовка
   if (fillW > barW - 2) fillW = barW - 2;
   if (fillW > 0) {
     display.fillRect(barX + 1, y + 1, fillW, barH - 2, WHITE);
   }
 
-  // Вертикальная метка на границе тарирования (50% полосы)
   int markerX = barX + half;
   display.drawFastVLine(markerX, y, barH, WHITE);
+}
+
+// ===== Стрелка тренда вверх/вниз =====
+static void drawTrendArrow(int x, int y, int8_t trend) {
+  if (trend == 1) {
+    // Стрелка вверх (треугольник)
+    display.fillTriangle(x, y + 6, x + 3, y, x + 6, y + 6, WHITE);
+  } else if (trend == -1) {
+    // Стрелка вниз (треугольник)
+    display.fillTriangle(x, y, x + 3, y + 6, x + 6, y, WHITE);
+  }
 }
 
 // ===== Главный экран =====
 void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
                       bool stable, bool btnHolding, unsigned long btnElapsed,
-                      bool batLowBlink, bool frozen) {
+                      bool batLowBlink, bool frozen,
+                      bool overloaded, int8_t trend,
+                      bool useGrams) {
   display.clearDisplay();
 
-  // --- Вес крупным шрифтом (#17: проверка переполнения) ---
+  // --- Перегрузка: мигающий текст вместо веса ---
+  if (overloaded) {
+    display.setTextSize(2);
+    // Мигание: показываем/скрываем каждые 500мс
+    if ((millis() / 500) % 2 == 0) {
+      display.setCursor(4, 0);
+      display.print("OVERLOAD!");
+    }
+    // Пропускаем отображение веса, но показываем батарею
+    drawBatteryIcon(0, 50, bat_percent, batLowBlink);
+    {
+      display.setTextSize(1);
+      int16_t x1, y1;
+      uint16_t tw, th;
+      char vBuf[10];
+      dtostrf(voltage, 4, 2, vBuf);
+      strcat(vBuf, "V");
+      display.getTextBounds(vBuf, 0, 0, &x1, &y1, &tw, &th);
+      display.setCursor(SCREEN_WIDTH - tw - 1, 51);
+      display.print(vBuf);
+    }
+    display.display();
+    return;
+  }
+
+  // --- Вес крупным шрифтом ---
   if (weight < WEIGHT_ERROR_THRESHOLD) {
     display.setTextSize(2);
     display.setCursor(0, 0);
     display.println("ERROR");
   } else {
-    // Формируем строку веса для проверки ширины
+    // Определяем отображаемый вес и единицу измерения
+    float displayVal = weight;
+    const char* unit = "kg";
+    if (useGrams) {
+      displayVal = weight * 1000.0f;
+      unit = "g";
+    }
+
     char wBuf[16];
     const char* prefix = stable ? "=" : "~";
-    dtostrf(weight, 1, 2, wBuf);
+    if (useGrams) {
+      dtostrf(displayVal, 1, 1, wBuf);
+    } else {
+      dtostrf(displayVal, 1, 2, wBuf);
+    }
 
-    // Проверяем, влезет ли в textSize=2
     char fullBuf[24];
-    snprintf(fullBuf, sizeof(fullBuf), "%s%s kg", prefix, wBuf);
+    snprintf(fullBuf, sizeof(fullBuf), "%s%s %s", prefix, wBuf, unit);
 
     int16_t x1, y1;
     uint16_t tw, th;
@@ -118,15 +159,19 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
     display.getTextBounds(fullBuf, 0, 0, &x1, &y1, &tw, &th);
 
     if (tw > SCREEN_WIDTH) {
-      // Не влезает — переключаем на textSize=1
       display.setTextSize(1);
     }
     display.setCursor(0, 0);
     display.print(fullBuf);
   }
 
-  // --- Индикатор заморозки (#19): «*» в правом верхнем углу ---
-  if (frozen) {
+  // --- Стрелка тренда рядом с индикатором стабильности ---
+  if (trend != 0 && weight > WEIGHT_ERROR_THRESHOLD) {
+    drawTrendArrow(SCREEN_WIDTH - 14, 2, trend);
+  }
+
+  // --- Индикатор заморозки: «*» в правом верхнем углу ---
+  if (frozen && trend == 0) {
     display.setTextSize(1);
     display.setCursor(SCREEN_WIDTH - 6, 0);
     display.print("*");
@@ -148,15 +193,22 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
     display.setTextSize(1);
     display.setCursor(0, 25);
     display.print("Delta: ");
-    if (delta > 0) display.print("+");
-    display.print(delta, 2);
-    display.println(" kg");
+    if (useGrams) {
+      float deltaG = delta * 1000.0f;
+      if (deltaG > 0) display.print("+");
+      display.print(deltaG, 1);
+      display.println(" g");
+    } else {
+      if (delta > 0) display.print("+");
+      display.print(delta, 2);
+      display.println(" kg");
+    }
   }
 
   // --- Иконка батареи и процент (нижний левый угол) ---
   drawBatteryIcon(0, 50, bat_percent, batLowBlink);
 
-  // --- Напряжение батареи (#18): всегда показывать, даже при мигании иконки ---
+  // --- Напряжение батареи ---
   {
     display.setTextSize(1);
     int16_t x1, y1;
@@ -172,7 +224,7 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
   display.display();
 }
 
-// ===== Показать сообщение на весь экран (#8: центрирование) =====
+// ===== Показать сообщение на весь экран =====
 void Display_ShowMessage(const char* msg) {
   display.clearDisplay();
   display.setTextSize(1);
@@ -194,7 +246,7 @@ void Display_Off() {
   display.ssd1306_command(SSD1306_DISPLAYOFF);
 }
 
-// ===== Экран заставки =====
+// ===== Экран заставки (простой) =====
 void Display_Splash(const char* title) {
   display.clearDisplay();
   display.setTextSize(2);
@@ -207,6 +259,41 @@ void Display_Splash(const char* title) {
 
   display.setCursor(x > 0 ? x : 0, y);
   display.println(title);
+  display.display();
+}
+
+// ===== Полный экран заставки с версией и батареей =====
+void Display_SplashFull(const char* title, const char* version,
+                        float voltage, int percent) {
+  display.clearDisplay();
+
+  // Заголовок крупным шрифтом (центрирование)
+  display.setTextSize(2);
+  int16_t x1, y1;
+  uint16_t tw, th;
+  display.getTextBounds(title, 0, 0, &x1, &y1, &tw, &th);
+  int16_t x = (SCREEN_WIDTH - (int16_t)tw) / 2;
+  display.setCursor(x > 0 ? x : 0, 4);
+  display.print(title);
+
+  // Версия мелким шрифтом под заголовком
+  display.setTextSize(1);
+  display.getTextBounds(version, 0, 0, &x1, &y1, &tw, &th);
+  x = (SCREEN_WIDTH - (int16_t)tw) / 2;
+  display.setCursor(x > 0 ? x : 0, 26);
+  display.print(version);
+
+  // Иконка батареи + напряжение внизу
+  drawBatteryIcon(0, 50, percent, false);
+  {
+    char vBuf[10];
+    dtostrf(voltage, 4, 2, vBuf);
+    strcat(vBuf, "V");
+    display.getTextBounds(vBuf, 0, 0, &x1, &y1, &tw, &th);
+    display.setCursor(SCREEN_WIDTH - tw - 1, 51);
+    display.print(vBuf);
+  }
+
   display.display();
 }
 
@@ -229,7 +316,7 @@ void Display_Progress(int percent) {
   display.display();
 }
 
-// ===== Неблокирующее затухание (#15): запуск =====
+// ===== Неблокирующее затухание: запуск =====
 void Display_Dim() {
   if (displayDimmed || fadeState == FADE_DIMMING) return;
   fadeState = FADE_DIMMING;
@@ -237,17 +324,15 @@ void Display_Dim() {
   lastFadeStepTime = millis();
 }
 
-// ===== Неблокирующее пробуждение (#15): запуск =====
+// ===== Неблокирующее пробуждение: запуск =====
 void Display_SmoothWake() {
   if (!displayDimmed && fadeState != FADE_DIMMING) return;
-  // Если затухали — отменяем и начинаем пробуждение
   fadeState = FADE_WAKING;
   fadeStepsLeft = WAKE_FADE_STEPS;
   lastFadeStepTime = millis();
 }
 
 // ===== Один шаг конечного автомата затухания =====
-// Вызывается каждый цикл loop(). Выполняет один шаг перехода яркости.
 void Display_FadeUpdate() {
   if (fadeState == FADE_IDLE) return;
 
@@ -258,7 +343,7 @@ void Display_FadeUpdate() {
   lastFadeStepTime = now;
 
   if (fadeState == FADE_DIMMING) {
-    int step = (int)(NORMAL_BRIGHTNESS - DIM_BRIGHTNESS) / DIM_FADE_STEPS;
+    int step = (int)(currentNormalBrightness - DIM_BRIGHTNESS) / DIM_FADE_STEPS;
     fadeBrightness = (fadeBrightness > step + DIM_BRIGHTNESS) ?
                      (fadeBrightness - step) : DIM_BRIGHTNESS;
     display.ssd1306_command(SSD1306_SETCONTRAST);
@@ -273,17 +358,17 @@ void Display_FadeUpdate() {
       fadeState = FADE_IDLE;
     }
   } else if (fadeState == FADE_WAKING) {
-    int step = (int)(NORMAL_BRIGHTNESS - DIM_BRIGHTNESS) / WAKE_FADE_STEPS;
-    fadeBrightness = (fadeBrightness + step < NORMAL_BRIGHTNESS) ?
-                     (fadeBrightness + step) : NORMAL_BRIGHTNESS;
+    int step = (int)(currentNormalBrightness - DIM_BRIGHTNESS) / WAKE_FADE_STEPS;
+    fadeBrightness = (fadeBrightness + step < currentNormalBrightness) ?
+                     (fadeBrightness + step) : currentNormalBrightness;
     display.ssd1306_command(SSD1306_SETCONTRAST);
     display.ssd1306_command(fadeBrightness);
 
     fadeStepsLeft--;
-    if (fadeStepsLeft <= 0 || fadeBrightness >= NORMAL_BRIGHTNESS) {
-      fadeBrightness = NORMAL_BRIGHTNESS;
+    if (fadeStepsLeft <= 0 || fadeBrightness >= currentNormalBrightness) {
+      fadeBrightness = currentNormalBrightness;
       display.ssd1306_command(SSD1306_SETCONTRAST);
-      display.ssd1306_command(NORMAL_BRIGHTNESS);
+      display.ssd1306_command(currentNormalBrightness);
       displayDimmed = false;
       fadeState = FADE_IDLE;
     }
@@ -291,9 +376,9 @@ void Display_FadeUpdate() {
 }
 
 // ===== Проверка таймера затухания =====
-void Display_CheckDim(unsigned long lastActivity) {
+void Display_CheckDim(unsigned long lastActivity, unsigned long autoDimMs) {
   unsigned long now = millis();
-  if (now - lastActivity > AUTO_DIM_MS && !displayDimmed && fadeState == FADE_IDLE) {
+  if (autoDimMs > 0 && now - lastActivity > autoDimMs && !displayDimmed && fadeState == FADE_IDLE) {
     Display_Dim();
   }
 }
@@ -301,13 +386,23 @@ void Display_CheckDim(unsigned long lastActivity) {
 // ===== Мгновенное пробуждение =====
 void Display_Wake() {
   fadeState = FADE_IDLE;
-  fadeBrightness = NORMAL_BRIGHTNESS;
+  fadeBrightness = currentNormalBrightness;
   display.ssd1306_command(SSD1306_SETCONTRAST);
-  display.ssd1306_command(NORMAL_BRIGHTNESS);
+  display.ssd1306_command(currentNormalBrightness);
   displayDimmed = false;
 }
 
 // ===== Дисплей затемнён? =====
 bool Display_IsDimmed() {
   return displayDimmed;
+}
+
+// ===== Установить яркость дисплея =====
+void Display_SetBrightness(uint8_t brightness) {
+  currentNormalBrightness = brightness;
+  if (!displayDimmed) {
+    fadeBrightness = brightness;
+    display.ssd1306_command(SSD1306_SETCONTRAST);
+    display.ssd1306_command(brightness);
+  }
 }

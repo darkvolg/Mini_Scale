@@ -8,25 +8,26 @@ static unsigned long btnPressTime = 0;
 // Время последнего изменения состояния (для антидребезга)
 static unsigned long btnDebounceTime = 0;
 
+// ===== Двойное нажатие =====
+// Время отпускания после первого короткого нажатия
+static unsigned long firstTapReleaseTime = 0;
+// Длительность первого нажатия
+static unsigned long firstTapDuration = 0;
+
 // ===== Инициализация кнопки =====
-// Настраивает пин кнопки с внутренней подтяжкой к питанию.
-// Кнопка замыкает пин на землю при нажатии (LOW = нажата).
 void Button_Init() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 }
 
 // ===== Опрос кнопки (конечный автомат) =====
 // Неблокирующая обработка кнопки с антидребезгом нажатия и отпускания.
-// Возвращает действие: BTN_NONE, BTN_SHOW_HINT, BTN_TARE или BTN_UNDO.
+// Поддерживает двойное нажатие (BTN_DOUBLE_TAP).
 //
-// Логика работы:
-// 1. IDLE -> PRESSED: зафиксировано нажатие, запуск антидребезга
-// 2. PRESSED -> HOLDING: антидребезг пройден, кнопка подтверждена
-// 3. HOLDING -> RELEASED: кнопка отпущена, запуск антидребезга отпускания
-// 4. RELEASED -> IDLE: определяем действие по длительности удержания:
-//    - более 10с = BTN_UNDO (отмена тарирования)
-//    - более 5с  = BTN_TARE (тарирование)
-//    - менее 5с  = BTN_NONE (слишком короткое удержание)
+// Логика двойного нажатия:
+// Если нажатие короткое (< DOUBLE_TAP_MAX_MS), вместо игнорирования
+// переходим в BTN_WAIT_DOUBLE. Если второе нажатие приходит в течение
+// DOUBLE_TAP_WINDOW_MS и тоже короткое — возвращаем BTN_DOUBLE_TAP.
+// Если таймаут истёк — просто BTN_NONE.
 ButtonAction Button_Update() {
   bool pressed = (digitalRead(BUTTON_PIN) == LOW);
   unsigned long now = millis();
@@ -79,15 +80,67 @@ ButtonAction Button_Update() {
 
       // Кнопка окончательно отпущена — определяем действие по времени удержания
       unsigned long elapsed = now - btnPressTime;
-      btnState = BTN_IDLE;
       lastActivityTime = now;
 
       if (elapsed > BUTTON_UNDO_MS) {
+        btnState = BTN_IDLE;
         return BTN_UNDO;  // Отмена тарирования
       } else if (elapsed > BUTTON_TARE_MS) {
+        btnState = BTN_IDLE;
         return BTN_TARE;  // Тарирование
       }
-      return BTN_NONE;    // Слишком короткое нажатие — игнорируем
+
+      // Короткое нажатие — возможно первый тап из double-tap
+      if (elapsed <= DOUBLE_TAP_MAX_MS) {
+        firstTapReleaseTime = now;
+        firstTapDuration = elapsed;
+        btnState = BTN_WAIT_DOUBLE;
+        return BTN_NONE;
+      }
+
+      // Нажатие не короткое и не длинное — игнорируем
+      btnState = BTN_IDLE;
+      return BTN_NONE;
+    }
+
+    case BTN_WAIT_DOUBLE: {
+      // Ожидание второго нажатия
+      if (now - firstTapReleaseTime > DOUBLE_TAP_WINDOW_MS) {
+        // Таймаут — двойного нажатия не было
+        btnState = BTN_IDLE;
+        return BTN_NONE;
+      }
+
+      if (pressed) {
+        // Антидребезг второго нажатия
+        delay(DEBOUNCE_MS);
+        if (digitalRead(BUTTON_PIN) != LOW) {
+          return BTN_NONE; // Ложное срабатывание
+        }
+
+        // Ждём отпускания второго нажатия
+        unsigned long press2Start = millis();
+        while (digitalRead(BUTTON_PIN) == LOW) {
+          ESP.wdtFeed();
+          delay(5);
+          // Если удержание слишком долгое — это не double-tap
+          if (millis() - press2Start > DOUBLE_TAP_MAX_MS) {
+            // Слишком долго — переходим в HOLDING
+            btnPressTime = press2Start;
+            btnState = BTN_HOLDING;
+            lastActivityTime = millis();
+            return BTN_SHOW_HINT;
+          }
+        }
+        delay(DEBOUNCE_MS);
+
+        // Второе нажатие короткое — подтверждённый double-tap
+        btnState = BTN_IDLE;
+        lastActivityTime = millis();
+        return BTN_DOUBLE_TAP;
+      }
+
+      return BTN_NONE;
     }
   }
   return BTN_NONE;

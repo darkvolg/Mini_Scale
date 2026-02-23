@@ -12,6 +12,12 @@ struct EEPROM_Data {
   float last_weight;           // Последний сохранённый вес (кг)
   float cal_factor;            // Калибровочный коэффициент HX711
   float backup_last_weight;    // Резервная копия веса перед тарированием (для отмены)
+  // === Настройки (добавлены в v3) ===
+  uint8_t brightness_level;    // Уровень яркости (0=LOW, 1=MED, 2=HIGH)
+  uint8_t auto_off_mode;       // Режим автовыключения (0=1мин, 1=3мин, 2=5мин, 3=OFF)
+  uint8_t auto_dim_mode;       // Режим автозатухания (0=30с, 1=60с, 2=120с)
+  uint8_t auto_zero_on;        // Auto-zero tracking (0=OFF, 1=ON)
+  uint8_t units_mode;          // Единицы измерения (0=кг, 1=г)
   uint16_t crc16;              // CRC16-CCITT контрольная сумма (рассчитывается по всем полям выше)
 };
 

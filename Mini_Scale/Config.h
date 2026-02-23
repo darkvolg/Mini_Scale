@@ -1,5 +1,17 @@
 #pragma once
 
+// ===================== Отладка =====================
+#define DEBUG_ENABLED  // Закомментировать для отключения отладки
+#ifdef DEBUG_ENABLED
+  #define DEBUG_PRINT(x)    Serial.print(x)
+  #define DEBUG_PRINTLN(x)  Serial.println(x)
+  #define DEBUG_PRINTF(fmt, ...) Serial.printf(fmt, ##__VA_ARGS__)
+#else
+  #define DEBUG_PRINT(x)
+  #define DEBUG_PRINTLN(x)
+  #define DEBUG_PRINTF(fmt, ...)
+#endif
+
 // ===================== Конфигурация пинов =====================
 #define DOUT_PIN D6          // Пин данных HX711
 #define SCK_PIN D5           // Пин тактового сигнала HX711
@@ -20,8 +32,14 @@
 #define WAKE_FADE_STEPS       3      // Количество шагов плавного пробуждения
 #define WAKE_FADE_STEP_MS     40     // Задержка между шагами пробуждения (мс)
 
+// Уровни яркости для меню настроек
+#define BRIGHTNESS_LOW        0x40
+#define BRIGHTNESS_MED        0x8F
+#define BRIGHTNESS_HIGH       0xCF
+
 // ===================== Версия прошивки =====================
-#define FIRMWARE_VERSION        2    // Версия формата данных EEPROM
+#define FIRMWARE_VERSION        3    // Версия формата данных EEPROM (v3: настройки)
+#define FW_VERSION_STR    "v1.5.0"   // Строковая версия для отображения
 
 // ===================== Параметры весов по умолчанию =====================
 #define DEFAULT_CALIBRATION 2280.0f  // Калибровочный коэффициент по умолчанию
@@ -41,6 +59,10 @@
 #define SUCCESS_MSG_MS          2000     // Время показа сообщения об успешной операции (мс)
 #define HX711_INIT_DELAY_MS     500      // Задержка инициализации HX711 (мс)
 #define HX711_TIMEOUT_MS        500      // Таймаут ожидания готовности HX711 (мс)
+
+// ===================== Двойное нажатие (настройки) =====================
+#define DOUBLE_TAP_WINDOW_MS    500      // Максимальный интервал между двумя нажатиями (мс)
+#define DOUBLE_TAP_MAX_MS       300      // Максимальная длительность одного нажатия (мс)
 
 // ===================== Количество выборок HX711 =====================
 #define HX711_SAMPLES_STARTUP   10  // Выборки при запуске (для точного начального значения)
@@ -68,6 +90,21 @@
 #define WEIGHT_FREEZE_THRESHOLD 0.02f    // Порог заморозки показаний на дисплее (кг)
 #define HX711_ERROR_COUNT_MAX   3        // Макс. подряд ошибок до отображения "ERROR"
 
+// ===================== Медианный фильтр =====================
+#define MEDIAN_WINDOW           3        // Размер медианного фильтра (3 значения)
+
+// ===================== Auto-zero tracking =====================
+#define AUTOZERO_THRESHOLD      0.05f    // Порог автокоррекции нуля (кг)
+#define AUTOZERO_STEP           1        // Шаг коррекции tare_offset
+#define AUTOZERO_INTERVAL_MS    3000UL   // Минимальный интервал коррекции (мс)
+#define AUTOZERO_MIN_STABLE_CYCLES 5     // Минимум стабильных циклов перед коррекцией
+
+// ===================== Перегрузка =====================
+#define WEIGHT_OVERLOAD_KG      5.0f     // Максимальная допустимая нагрузка (кг)
+
+// ===================== Тренд (стрелка направления) =====================
+#define TREND_THRESHOLD         0.03f    // Минимальная разница для отображения тренда (кг)
+
 // ===================== EEPROM =====================
 #define EEPROM_SLOTS            4            // Количество слотов износовыравнивания
 #define MAGIC_NUMBER            0x2A2B3CUL   // Магическое число для проверки целостности данных
@@ -83,3 +120,18 @@
 
 // ===================== Ограничение записи EEPROM =====================
 #define EEPROM_MIN_INTERVAL_MS  300000UL  // Минимальный интервал записи в EEPROM (5 минут)
+
+// ===================== Настройки по умолчанию (меню) =====================
+#define DEFAULT_BRIGHTNESS_LEVEL  2   // HIGH (0=LOW, 1=MED, 2=HIGH)
+#define DEFAULT_AUTO_OFF_MODE     1   // 3 мин (0=1мин, 1=3мин, 2=5мин, 3=OFF)
+#define DEFAULT_AUTO_DIM_MODE     1   // 60с (0=30с, 1=60с, 2=120с)
+#define DEFAULT_AUTO_ZERO_ON      1   // Включен (0=OFF, 1=ON)
+#define DEFAULT_UNITS_MODE        0   // кг (0=кг, 1=г)
+
+// Значения таймеров автовыключения по индексу
+#define AUTO_OFF_VALUES_COUNT     4
+// 60000, 180000, 300000, 0 (OFF) — используются в коде как массив
+
+// Значения таймеров автозатухания по индексу
+#define AUTO_DIM_VALUES_COUNT     3
+// 30000, 60000, 120000 — используются в коде как массив

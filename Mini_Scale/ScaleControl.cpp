@@ -17,20 +17,33 @@ static bool weightHistoryFull = false;
 
 // ===== EMA-фильтр веса =====
 // Экспоненциальное скользящее среднее для сглаживания шума датчика.
-// Коэффициент WEIGHT_EMA_ALPHA определяет отзывчивость фильтра.
 static float filteredWeight = 0.0;
 static bool filterInitialized = false;
 
 // ===== Заморозка показаний на дисплее =====
-// Когда вес стабилен — показания "замораживаются" и не дёргаются.
-// Размораживаются, когда вес изменился больше WEIGHT_FREEZE_THRESHOLD.
 static float frozenWeight = 0.0;
 static bool isFrozen = false;
 
 // ===== Счётчик ошибок HX711 =====
-// При нескольких подряд ошибках чтения — отображаем "ERROR".
 static uint8_t errorCount = 0;
 static float lastValidWeight = 0.0;
+
+// ===== Медианный фильтр (3 значения) =====
+static float medianBuf[MEDIAN_WINDOW];
+static uint8_t medianIdx = 0;
+static uint8_t medianCount = 0;
+
+// ===== Auto-zero tracking =====
+static uint8_t autoZeroStableCount = 0;
+static unsigned long lastAutoZeroTime = 0;
+static bool autoZeroEnabled = true;
+
+// ===== Перегрузка =====
+static bool isOverloaded = false;
+
+// ===== Тренд веса =====
+static float prevTrendWeight = 0.0;
+static int8_t weightTrend = 0;
 
 // Добавить значение в кольцевой буфер стабильности
 static void stabilityPush(float w) {
@@ -46,9 +59,15 @@ static float roundWeight(float w) {
   return round(w * 100.0f) / 100.0f;
 }
 
+// ===== Медианный фильтр: медиана трёх значений =====
+static float medianOfThree(float a, float b, float c) {
+  if (a > b) { float t = a; a = b; b = t; }
+  if (b > c) { float t = b; b = c; c = t; }
+  if (a > b) { float t = a; a = b; b = t; }
+  return b;
+}
+
 // ===== Инициализация датчика веса =====
-// Настраивает HX711 с сохранёнными калибровочным коэффициентом и смещением тары.
-// Считывает начальный вес, вычисляет дельту сессии (разницу с последним сохранённым).
 void Scale_Init() {
   scale.begin(DOUT_PIN, SCK_PIN);
   scale.set_scale(savedData.cal_factor);
@@ -58,7 +77,7 @@ void Scale_Init() {
 
   // Проверяем готовность HX711
   if (!scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
-    Serial.println(F("HX711: не готов при запуске"));
+    DEBUG_PRINTLN(F("HX711: не готов при запуске"));
     current_weight = WEIGHT_ERROR_FLAG;
     display_weight = WEIGHT_ERROR_FLAG;
     return;
@@ -73,7 +92,7 @@ void Scale_Init() {
   // Вычисляем дельту сессии: текущий вес минус последний сохранённый
   session_delta = startup_weight - savedData.last_weight;
 
-  // Сохраняем в EEPROM только если вес изменился значительно (#7)
+  // Сохраняем в EEPROM только если вес изменился значительно
   if (fabs(startup_weight - savedData.last_weight) > WEIGHT_CHANGE_THRESHOLD) {
     savedData.last_weight = startup_weight;
     Memory_ForceSave();
@@ -85,12 +104,14 @@ void Scale_Init() {
   lastValidWeight = startup_weight;
   current_weight = startup_weight;
   display_weight = roundWeight(startup_weight);
+  prevTrendWeight = startup_weight;
+
+  // Загрузка настройки auto-zero из EEPROM
+  autoZeroEnabled = (savedData.auto_zero_on != 0);
+  lastAutoZeroTime = millis();
 }
 
 // ===== Обновление показаний веса =====
-// Вызывается каждый цикл loop(). Читает данные с HX711,
-// применяет EMA-фильтр, обновляет буфер стабильности
-// и управляет заморозкой показаний на дисплее.
 void Scale_Update() {
   // Проверяем готовность HX711
   if (!scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
@@ -99,7 +120,6 @@ void Scale_Update() {
       current_weight = WEIGHT_ERROR_FLAG;
       display_weight = WEIGHT_ERROR_FLAG;
     }
-    // При единичной ошибке — сохраняем последний корректный вес
     return;
   }
 
@@ -118,27 +138,56 @@ void Scale_Update() {
   errorCount = 0;
   lastValidWeight = raw;
 
+  // ===== Медианный фильтр: убирает импульсные помехи =====
+  medianBuf[medianIdx] = raw;
+  medianIdx = (medianIdx + 1) % MEDIAN_WINDOW;
+  if (medianCount < MEDIAN_WINDOW) medianCount++;
+
+  float valueForEMA = raw;
+  if (medianCount >= MEDIAN_WINDOW) {
+    valueForEMA = medianOfThree(medianBuf[0], medianBuf[1], medianBuf[2]);
+    DEBUG_PRINTF("Median: %.3f -> %.3f\n", raw, valueForEMA);
+  }
+
   // Применение EMA-фильтра для сглаживания показаний
   if (!filterInitialized) {
-    filteredWeight = raw;
+    filteredWeight = valueForEMA;
     filterInitialized = true;
   } else {
-    filteredWeight = (WEIGHT_EMA_ALPHA * raw) + ((1.0f - WEIGHT_EMA_ALPHA) * filteredWeight);
+    filteredWeight = (WEIGHT_EMA_ALPHA * valueForEMA) + ((1.0f - WEIGHT_EMA_ALPHA) * filteredWeight);
   }
 
   current_weight = filteredWeight;
   stabilityPush(filteredWeight);
 
-  // Авто-заморозка: фиксируем показания при стабильном весе,
-  // чтобы цифры не дёргались на дисплее
+  // ===== Перегрузка =====
+  if (fabs(filteredWeight) > WEIGHT_OVERLOAD_KG) {
+    if (!isOverloaded) {
+      DEBUG_PRINTLN(F("OVERLOAD detected!"));
+    }
+    isOverloaded = true;
+  } else {
+    isOverloaded = false;
+  }
+
+  // ===== Тренд веса =====
+  float diff = filteredWeight - prevTrendWeight;
+  if (diff > TREND_THRESHOLD) {
+    weightTrend = 1;
+  } else if (diff < -TREND_THRESHOLD) {
+    weightTrend = -1;
+  } else {
+    weightTrend = 0;
+  }
+  prevTrendWeight = filteredWeight;
+
+  // Авто-заморозка: фиксируем показания при стабильном весе
   float rounded = roundWeight(filteredWeight);
   if (isFrozen) {
-    // Размораживаем, если вес изменился значительно
     if (fabs(rounded - frozenWeight) > WEIGHT_FREEZE_THRESHOLD) {
       isFrozen = false;
       display_weight = rounded;
     }
-    // Иначе — продолжаем показывать замороженное значение
   } else {
     display_weight = rounded;
     if (Scale_IsStable()) {
@@ -146,19 +195,46 @@ void Scale_Update() {
       isFrozen = true;
     }
   }
+
+  // ===== Auto-zero tracking =====
+  if (autoZeroEnabled && Scale_IsStable() && fabs(display_weight) < AUTOZERO_THRESHOLD && !isOverloaded) {
+    autoZeroStableCount++;
+    unsigned long now = millis();
+    if (autoZeroStableCount >= AUTOZERO_MIN_STABLE_CYCLES &&
+        (now - lastAutoZeroTime >= AUTOZERO_INTERVAL_MS)) {
+      // Коррекция offset: сдвигаем tare_offset к нулю
+      if (display_weight > 0.001f) {
+        savedData.tare_offset += AUTOZERO_STEP;
+      } else if (display_weight < -0.001f) {
+        savedData.tare_offset -= AUTOZERO_STEP;
+      }
+      scale.set_offset(savedData.tare_offset);
+
+      // Пересчитать filteredWeight после коррекции
+      filteredWeight = scale.get_units(1);
+      if (isnan(filteredWeight) || isinf(filteredWeight)) {
+        filteredWeight = 0.0;
+      }
+      current_weight = filteredWeight;
+      display_weight = roundWeight(filteredWeight);
+
+      lastAutoZeroTime = now;
+      autoZeroStableCount = 0;
+      Memory_MarkDirty();
+      DEBUG_PRINTLN(F("Auto-zero: offset corrected"));
+    }
+  } else {
+    autoZeroStableCount = 0;
+  }
 }
 
 // ===== Тарирование (обнуление) весов =====
-// Устанавливает текущий вес как ноль. Сохраняет резервную копию
-// смещения и веса для возможности отмены (Undo).
-// Возвращает true при успехе, false при ошибке.
 bool Scale_Tare() {
   if (!scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
     current_weight = WEIGHT_ERROR_FLAG;
     return false;
   }
 
-  // Проверка адекватности: отказываем, если текущий вес аномальный
   if (current_weight < WEIGHT_ERROR_THRESHOLD ||
       fabs(current_weight) > WEIGHT_SANE_MAX) {
     return false;
@@ -186,22 +262,22 @@ bool Scale_Tare() {
   weightHistoryIdx = 0;
   weightHistoryFull = false;
   errorCount = 0;
+  medianCount = 0;
+  medianIdx = 0;
+  autoZeroStableCount = 0;
+  prevTrendWeight = 0.0;
+  weightTrend = 0;
   return true;
 }
 
 // ===== Отмена тарирования =====
-// Восстанавливает смещение тары и вес из резервной копии.
-// Возвращает true при успехе, false если отмена недоступна.
 bool Scale_UndoTare() {
   if (!undoAvailable) {
     return false;
   }
 
-  // Восстановление смещения тары из резервной копии
   savedData.tare_offset = savedData.backup_offset;
   scale.set_offset(savedData.tare_offset);
-
-  // Восстановление последнего сохранённого веса
   savedData.last_weight = savedData.backup_last_weight;
 
   if (!scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
@@ -210,28 +286,28 @@ bool Scale_UndoTare() {
     return false;
   }
 
-  // Считываем вес с восстановленным смещением
   float w = scale.get_units(HX711_SAMPLES_UNDO);
   if (!isnan(w) && !isinf(w)) {
     session_delta = w - savedData.last_weight;
     filteredWeight = w;
     display_weight = roundWeight(w);
+    prevTrendWeight = w;
   }
   Memory_ForceSave();
 
   undoAvailable = false;
   isFrozen = false;
-
-  // Сброс буфера стабильности
   weightHistoryIdx = 0;
   weightHistoryFull = false;
   errorCount = 0;
+  medianCount = 0;
+  medianIdx = 0;
+  autoZeroStableCount = 0;
+  weightTrend = 0;
   return true;
 }
 
 // ===== Проверка стабильности показаний =====
-// Анализирует кольцевой буфер: если разброс значений (макс - мин)
-// меньше STABILITY_THRESHOLD — показания считаются стабильными.
 bool Scale_IsStable() {
   uint8_t count = weightHistoryFull ? STABILITY_WINDOW : weightHistoryIdx;
   if (count < 2) return false;
@@ -246,13 +322,32 @@ bool Scale_IsStable() {
 }
 
 // ===== Проверка режима ожидания =====
-// Весы в режиме ожидания, если показания стабильны и нет ошибок HX711.
 bool Scale_IsIdle() {
   return Scale_IsStable() && (errorCount == 0);
 }
 
 // ===== Проверка заморозки показаний =====
-// Возвращает true, если показания на дисплее заморожены (стабильный вес).
 bool Scale_IsFrozen() {
   return isFrozen;
+}
+
+// ===== Auto-zero: включить/выключить =====
+void Scale_SetAutoZero(bool on) {
+  autoZeroEnabled = on;
+  autoZeroStableCount = 0;
+}
+
+// ===== Auto-zero: получить состояние =====
+bool Scale_GetAutoZero() {
+  return autoZeroEnabled;
+}
+
+// ===== Перегрузка: проверка =====
+bool Scale_IsOverloaded() {
+  return isOverloaded;
+}
+
+// ===== Тренд: получить направление =====
+int8_t Scale_GetTrend() {
+  return weightTrend;
 }

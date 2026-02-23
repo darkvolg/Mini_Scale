@@ -15,6 +15,11 @@
 #include "ButtonControl.h"
 #include "CalibrationMode.h"
 #include "BatteryControl.h"
+#include "SettingsMode.h"
+
+extern "C" {
+  #include "user_interface.h"
+}
 
 // Таймер бездействия: сбрасывается при изменении веса или нажатии кнопки.
 unsigned long lastActivityTime = 0;
@@ -27,9 +32,35 @@ static bool showingMessage = false;
 static unsigned long messageStartTime = 0;
 static const char* messageText = nullptr;
 
+// Активные таймеры (загружаются из настроек)
+static unsigned long activeAutoOffMs = AUTO_OFF_MS;
+static unsigned long activeAutoDimMs = AUTO_DIM_MS;
+static bool useGrams = false;
+
+// Таблицы значений (должны совпадать с SettingsMode.cpp)
+static const unsigned long autoOffTable[] = { 60000UL, 180000UL, 300000UL, 0UL };
+static const unsigned long autoDimTable[] = { 30000UL, 60000UL, 120000UL };
+
+// ===== Загрузка настроек из EEPROM в рабочие переменные =====
+static void loadSettings() {
+  // Auto-off
+  uint8_t offMode = constrain(savedData.auto_off_mode, 0, 3);
+  activeAutoOffMs = autoOffTable[offMode];
+
+  // Auto-dim
+  uint8_t dimMode = constrain(savedData.auto_dim_mode, 0, 2);
+  activeAutoDimMs = autoDimTable[dimMode];
+
+  // Единицы
+  useGrams = (savedData.units_mode == 1);
+
+  DEBUG_PRINTF("Loaded: off=%lums, dim=%lums, grams=%d\n",
+               activeAutoOffMs, activeAutoDimMs, useGrams);
+}
+
 // ===== Инициализация =====
 void setup() {
-  // Отключение WiFi для экономии ~70 мА (#1)
+  // Отключение WiFi для экономии ~70 мА
   WiFi.mode(WIFI_OFF);
   WiFi.forceSleepBegin();
   delay(1);
@@ -55,7 +86,15 @@ void setup() {
   // Инициализация датчика веса HX711
   Scale_Init();
   Display_Progress(100);
-  delay(300);
+
+  // Применить сохранённые настройки
+  ApplySettings();
+  loadSettings();
+
+  // Показать полный splash-экран с версией и батареей
+  Display_SplashFull("Mini Scale", FW_VERSION_STR,
+                     Battery_GetVoltage(), Battery_GetPercent());
+  delay(1500);
 
   // Проверка входа в режим калибровки:
   // если кнопка удерживается во время заставки — запускаем калибровку
@@ -83,10 +122,10 @@ void loop() {
   // Сброс сторожевого таймера ESP8266
   ESP.wdtFeed();
 
-  // Один шаг неблокирующего затухания/пробуждения (#15)
+  // Один шаг неблокирующего затухания/пробуждения
   Display_FadeUpdate();
 
-  // 1. Обновление показаний веса (чтение HX711, EMA-фильтр, заморозка)
+  // 1. Обновление показаний веса (чтение HX711, медианный фильтр, EMA, заморозка)
   Scale_Update();
 
   // Сброс таймера бездействия при значимом изменении веса
@@ -99,7 +138,7 @@ void loop() {
   // 2. Обновление показаний батареи (внутри — троттлинг раз в 5 секунд)
   Battery_Update();
 
-  // 3. Безопасное выключение при критическом разряде (#3)
+  // 3. Безопасное выключение при критическом разряде
   if (Battery_IsCritical()) {
     Display_Wake();
     Display_ShowMessage("LOW BATTERY!");
@@ -143,6 +182,12 @@ void loop() {
     showingMessage = true;
     messageStartTime = millis();
     lastActivityTime = millis();
+  } else if (action == BTN_DOUBLE_TAP) {
+    // Двойное нажатие — вход в меню настроек
+    RunSettingsMode();
+    // После выхода из меню — перезагрузить настройки
+    loadSettings();
+    lastActivityTime = millis();
   }
 
   // Пробуждение дисплея при любом нажатии кнопки (плавное включение)
@@ -151,7 +196,7 @@ void loop() {
   }
 
   // 6. Отрисовка главного экрана
-  // Пропуск перерисовки когда дисплей затемнён и вес стабилен (#12)
+  // Пропуск перерисовки когда дисплей затемнён и вес стабилен
   if (Display_IsDimmed() && Scale_IsStable() && !Button_IsHolding()) {
     // Дисплей тусклый и вес стабилен — нет смысла перерисовывать
   } else {
@@ -162,7 +207,9 @@ void loop() {
     Display_ShowMain(display_weight, session_delta,
                      Battery_GetVoltage(), Battery_GetPercent(),
                      stable, btnHolding, btnElapsed,
-                     Battery_BlinkPhase(), Scale_IsFrozen());
+                     Battery_BlinkPhase(), Scale_IsFrozen(),
+                     Scale_IsOverloaded(), Scale_GetTrend(),
+                     useGrams);
   }
 
   // 7. Периодическое сохранение веса в EEPROM (с dirty-проверкой и троттлингом)
@@ -172,10 +219,10 @@ void loop() {
   }
 
   // 8. Авто-затухание дисплея при бездействии
-  Display_CheckDim(lastActivityTime);
+  Display_CheckDim(lastActivityTime, activeAutoDimMs);
 
-  // 9. Авто-выключение при длительном бездействии (#6: отмена кнопкой)
-  if (millis() - lastActivityTime > AUTO_OFF_MS) {
+  // 9. Авто-выключение при длительном бездействии
+  if (activeAutoOffMs > 0 && millis() - lastActivityTime > activeAutoOffMs) {
     Memory_ForceSave();
     Display_Wake();
     Display_ShowMessage("Auto Power Off...");
@@ -207,11 +254,12 @@ void loop() {
     }
   }
 
-  // 10. Адаптивная задержка + HX711 power management (#11)
+  // 10. Адаптивная задержка + HX711 power management + Light Sleep
   if (Scale_IsIdle() && !Button_IsHolding()) {
-    // В режиме ожидания: выключаем HX711 на время задержки
+    // В режиме ожидания: выключаем HX711, переводим CPU в light sleep
     scale.power_down();
-    delay(LOOP_DELAY_IDLE_MS);
+    wifi_set_sleep_type(LIGHT_SLEEP_T);
+    delay(LOOP_DELAY_IDLE_MS);  // delay() в light sleep = аппаратный light sleep
     scale.power_up();
   } else {
     delay(LOOP_DELAY_MS);
