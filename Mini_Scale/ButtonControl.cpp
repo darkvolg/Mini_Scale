@@ -46,8 +46,11 @@ ButtonAction Button_Update() {
         return BTN_NONE;
       }
       if (pressed) {
-        // Нажатие подтверждено после антидребезга
-        btnPressTime = now;
+        // Нажатие подтверждено после антидребезга.
+        // Время нажатия фиксируем с момента первого обнаружения (btnDebounceTime),
+        // иначе elapsed будет занижен на DEBOUNCE_MS и при быстром нажатии
+        // unsigned-вычитание переполнится → огромное число → ложный UNDO/TARE.
+        btnPressTime = btnDebounceTime;
         btnState = BTN_HOLDING;
         lastActivityTime = now;
         return BTN_SHOW_HINT;
@@ -78,8 +81,11 @@ ButtonAction Button_Update() {
         return BTN_SHOW_HINT;
       }
 
-      // Кнопка окончательно отпущена — определяем действие по времени удержания
-      unsigned long elapsed = now - btnPressTime;
+      // Кнопка окончательно отпущена — определяем действие по времени удержания.
+      // elapsed = от начала нажатия до начала debounce отпускания (реальное время удержания).
+      // Используем btnDebounceTime (момент отпускания) вместо now, чтобы не включать
+      // время ожидания debounce отпускания в длительность нажатия.
+      unsigned long elapsed = btnDebounceTime - btnPressTime;
       lastActivityTime = now;
 
       if (elapsed > BUTTON_UNDO_MS) {
