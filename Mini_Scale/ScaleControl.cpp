@@ -1,65 +1,70 @@
 #include "ScaleControl.h"
+#include "ButtonControl.h"
 #include <math.h>
+extern "C" {
+  #include "user_interface.h"
+}
 
 // Глобальные переменные — доступны из других модулей
 HX711 scale;
-float session_delta = 0.0;   // Разница веса от начала сессии
-float current_weight = 0.0;  // Текущий отфильтрованный вес
-float display_weight = 0.0;  // Вес для отображения (заморожен при стабильности)
-bool undoAvailable = false;  // Флаг доступности отмены тарирования
+float session_delta  = 0.0f;
+float current_weight = 0.0f;
+float display_weight = 0.0f;
+bool  undoAvailable  = false;
 
 // ===== Кольцевой буфер стабильности =====
-// Хранит последние STABILITY_WINDOW значений веса.
-// Если разброс (макс - мин) меньше STABILITY_THRESHOLD — вес стабилен.
-static float weightHistory[STABILITY_WINDOW];
-static uint8_t weightHistoryIdx = 0;
-static bool weightHistoryFull = false;
+static float    weightHistory[STABILITY_WINDOW];
+static uint8_t  weightHistoryIdx  = 0;
+static bool     weightHistoryFull = false;
 
 // ===== EMA-фильтр веса =====
-// Экспоненциальное скользящее среднее для сглаживания шума датчика.
-static float filteredWeight = 0.0;
-static bool filterInitialized = false;
+static float filteredWeight    = 0.0;
+static bool  filterInitialized = false;
 
 // ===== Заморозка показаний на дисплее =====
 static float frozenWeight = 0.0;
-static bool isFrozen = false;
+static bool  isFrozen     = false;
 
 // ===== Счётчик ошибок HX711 =====
 static uint8_t errorCount = 0;
-static float lastValidWeight = 0.0;
 
 // ===== Медианный фильтр (3 значения) =====
-static float medianBuf[MEDIAN_WINDOW];
-static uint8_t medianIdx = 0;
+static float   medianBuf[MEDIAN_WINDOW];
+static uint8_t medianIdx   = 0;
 static uint8_t medianCount = 0;
 
 // ===== Auto-zero tracking =====
-static uint8_t autoZeroStableCount = 0;
-static unsigned long lastAutoZeroTime = 0;
-static bool autoZeroEnabled = true;
+static uint8_t       autoZeroStableCount = 0;
+static unsigned long lastAutoZeroTime    = 0;
+static bool          autoZeroEnabled     = true;
+
+// ===== Отложенное действие кнопки из Scale_PowerSave =====
+static ButtonAction pendingAction = BTN_NONE;
 
 // ===== Перегрузка =====
 static bool isOverloaded = false;
 
 // ===== Тренд веса =====
-static float prevTrendWeight = 0.0;
-static int8_t weightTrend = 0;
+static float  prevTrendWeight = 0.0f;
+static int8_t weightTrend     = 0;
 
-// Добавить значение в кольцевой буфер стабильности
+// -------------------------------------------------------
+// Вспомогательные функции
+// -------------------------------------------------------
+
+// Добавить новое значение в кольцевой буфер стабильности
 static void stabilityPush(float w) {
   weightHistory[weightHistoryIdx] = w;
   weightHistoryIdx = (weightHistoryIdx + 1) % STABILITY_WINDOW;
-  if (!weightHistoryFull && weightHistoryIdx == 0) {
-    weightHistoryFull = true;
-  }
+  if (!weightHistoryFull && weightHistoryIdx == 0) weightHistoryFull = true;
 }
 
-// Округление веса до 2 знаков после запятой
+// Округление до 2 знаков после запятой (для отображения на дисплее)
 static float roundWeight(float w) {
   return round(w * 100.0f) / 100.0f;
 }
 
-// ===== Медианный фильтр: медиана трёх значений =====
+// Медиана из трёх значений — убирает одиночные выбросы АЦП
 static float medianOfThree(float a, float b, float c) {
   if (a > b) { float t = a; a = b; b = t; }
   if (b > c) { float t = b; b = c; c = t; }
@@ -67,15 +72,17 @@ static float medianOfThree(float a, float b, float c) {
   return b;
 }
 
-// ===== Инициализация датчика веса =====
+// -------------------------------------------------------
+// Scale_Init
+// -------------------------------------------------------
+// Инициализация HX711: загружаем сохранённый offset и cal_factor из EEPROM,
+// делаем начальное считывание для инициализации EMA и вычисления session_delta.
 void Scale_Init() {
   scale.begin(DOUT_PIN, SCK_PIN);
   scale.set_scale(savedData.cal_factor);
   scale.set_offset(savedData.tare_offset);
-
   delay(HX711_INIT_DELAY_MS);
 
-  // Проверяем готовность HX711
   if (!scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
     DEBUG_PRINTLN(F("HX711: не готов при запуске"));
     current_weight = WEIGHT_ERROR_FLAG;
@@ -83,37 +90,32 @@ void Scale_Init() {
     return;
   }
 
-  // Считываем начальный вес (больше выборок для точности)
   float startup_weight = scale.get_units(HX711_SAMPLES_STARTUP);
-  if (isnan(startup_weight) || isinf(startup_weight)) {
-    startup_weight = 0.0;
-  }
+  if (isnan(startup_weight) || isinf(startup_weight)) startup_weight = 0.0f;
 
-  // Вычисляем дельту сессии: текущий вес минус последний сохранённый
   session_delta = startup_weight - savedData.last_weight;
 
-  // Сохраняем в EEPROM только если вес изменился значительно
   if (fabs(startup_weight - savedData.last_weight) > WEIGHT_CHANGE_THRESHOLD) {
     savedData.last_weight = startup_weight;
     Memory_ForceSave();
   }
 
-  // Инициализация фильтра и начальных значений
-  filteredWeight = startup_weight;
+  filteredWeight    = startup_weight;
   filterInitialized = true;
-  lastValidWeight = startup_weight;
-  current_weight = startup_weight;
-  display_weight = roundWeight(startup_weight);
-  prevTrendWeight = startup_weight;
+  current_weight    = startup_weight;
+  display_weight    = roundWeight(startup_weight);
+  prevTrendWeight   = startup_weight;
 
-  // Загрузка настройки auto-zero из EEPROM
-  autoZeroEnabled = (savedData.auto_zero_on != 0);
+  autoZeroEnabled  = (savedData.auto_zero_on != 0) && (savedData.tara_lock_on == 0);
   lastAutoZeroTime = millis();
 }
 
-// ===== Обновление показаний веса =====
+// -------------------------------------------------------
+// Scale_Update
+// -------------------------------------------------------
+// Главная функция обновления веса — вызывается каждый loop().
+// Цепочка обработки: raw → медианный фильтр → EMA → заморозка → тренд → авто-нуль.
 void Scale_Update() {
-  // Проверяем готовность HX711
   if (!scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
     errorCount++;
     if (errorCount >= HX711_ERROR_COUNT_MAX) {
@@ -123,7 +125,6 @@ void Scale_Update() {
     return;
   }
 
-  // Чтение веса с датчика
   float raw = scale.get_units(HX711_SAMPLES_READ);
   if (isnan(raw) || isinf(raw)) {
     errorCount++;
@@ -134,21 +135,18 @@ void Scale_Update() {
     return;
   }
 
-  // Корректное чтение — сбрасываем счётчик ошибок
+  // Восстановление из ERROR — сброс буферов
   if (errorCount >= HX711_ERROR_COUNT_MAX) {
-    // Восстановление из состояния ERROR: сбрасываем буферы,
-    // чтобы мусорные данные не влияли на стабильность и фильтр
-    weightHistoryIdx = 0;
+    weightHistoryIdx  = 0;
     weightHistoryFull = false;
-    medianCount = 0;
-    medianIdx = 0;
+    medianCount       = 0;
+    medianIdx         = 0;
     filterInitialized = false;
-    DEBUG_PRINTLN(F("HX711: восстановление из ERROR, сброс буферов"));
+    DEBUG_PRINTLN(F("HX711: восстановление из ERROR"));
   }
   errorCount = 0;
-  lastValidWeight = raw;
 
-  // ===== Медианный фильтр: убирает импульсные помехи =====
+  // -- Медианный фильтр --
   medianBuf[medianIdx] = raw;
   medianIdx = (medianIdx + 1) % MEDIAN_WINDOW;
   if (medianCount < MEDIAN_WINDOW) medianCount++;
@@ -159,132 +157,132 @@ void Scale_Update() {
     DEBUG_PRINTF("Median: %.3f -> %.3f\n", raw, valueForEMA);
   }
 
-  // Применение EMA-фильтра для сглаживания показаний
+  // -- EMA-фильтр --
   if (!filterInitialized) {
-    filteredWeight = valueForEMA;
+    filteredWeight    = valueForEMA;
     filterInitialized = true;
   } else {
-    filteredWeight = (WEIGHT_EMA_ALPHA * valueForEMA) + ((1.0f - WEIGHT_EMA_ALPHA) * filteredWeight);
+    filteredWeight = (WEIGHT_EMA_ALPHA * valueForEMA) +
+                     ((1.0f - WEIGHT_EMA_ALPHA) * filteredWeight);
   }
 
   current_weight = filteredWeight;
   stabilityPush(filteredWeight);
 
-  // ===== Перегрузка =====
+  // -- Перегрузка --
   if (fabs(filteredWeight) > WEIGHT_OVERLOAD_KG) {
-    if (!isOverloaded) {
-      DEBUG_PRINTLN(F("OVERLOAD detected!"));
-    }
+    if (!isOverloaded) DEBUG_PRINTLN(F("OVERLOAD!"));
     isOverloaded = true;
   } else {
     isOverloaded = false;
   }
 
-  // ===== Тренд веса =====
+  // -- Тренд --
   float diff = filteredWeight - prevTrendWeight;
-  if (diff > TREND_THRESHOLD) {
-    weightTrend = 1;
-  } else if (diff < -TREND_THRESHOLD) {
-    weightTrend = -1;
-  } else {
-    weightTrend = 0;
-  }
+  if      (diff >  TREND_THRESHOLD) weightTrend =  1;
+  else if (diff < -TREND_THRESHOLD) weightTrend = -1;
+  else                              weightTrend =  0;
   prevTrendWeight = filteredWeight;
 
-  // Авто-заморозка: фиксируем показания при стабильном весе
+  // -- Авто-заморозка --
   float rounded = roundWeight(filteredWeight);
   if (isFrozen) {
     if (fabs(rounded - frozenWeight) > WEIGHT_FREEZE_THRESHOLD) {
-      isFrozen = false;
+      isFrozen       = false;
       display_weight = rounded;
     }
   } else {
     display_weight = rounded;
     if (Scale_IsStable()) {
       frozenWeight = rounded;
-      isFrozen = true;
+      isFrozen     = true;
     }
   }
 
-  // ===== Auto-zero tracking =====
-  if (autoZeroEnabled && Scale_IsStable() && fabs(display_weight) < AUTOZERO_THRESHOLD && !isOverloaded) {
+  // -- Auto-zero tracking --
+  if (autoZeroEnabled && Scale_IsStable() &&
+      fabs(display_weight) < AUTOZERO_THRESHOLD && !isOverloaded) {
     autoZeroStableCount++;
     unsigned long now = millis();
     if (autoZeroStableCount >= AUTOZERO_MIN_STABLE_CYCLES &&
         (now - lastAutoZeroTime >= AUTOZERO_INTERVAL_MS)) {
-      // Коррекция offset: сдвигаем tare_offset к нулю
-      if (display_weight > 0.001f) {
-        savedData.tare_offset += AUTOZERO_STEP;
-      } else if (display_weight < -0.001f) {
-        savedData.tare_offset -= AUTOZERO_STEP;
-      }
+
+      // BUG-5 fix: сохраняем шаг ДО применения — откат детерминирован
+      long step = (display_weight > 0.001f) ? AUTOZERO_STEP : -AUTOZERO_STEP;
+      savedData.tare_offset += step;
       scale.set_offset(savedData.tare_offset);
 
-      // Пересчитать filteredWeight после коррекции
-      filteredWeight = scale.get_units(1);
-      if (isnan(filteredWeight) || isinf(filteredWeight)) {
-        filteredWeight = 0.0;
+      float newWeight = scale.get_units(1);
+      if (!isnan(newWeight) && !isinf(newWeight)) {
+        filteredWeight = newWeight;
+        current_weight = filteredWeight;
+        display_weight = roundWeight(filteredWeight);
+        Memory_MarkDirty();
+        DEBUG_PRINTLN(F("Auto-zero: corrected"));
+      } else {
+        // Откат — ровно тот же шаг
+        savedData.tare_offset -= step;
+        scale.set_offset(savedData.tare_offset);
+        DEBUG_PRINTLN(F("Auto-zero: read failed, reverted"));
       }
-      current_weight = filteredWeight;
-      display_weight = roundWeight(filteredWeight);
 
-      lastAutoZeroTime = now;
+      lastAutoZeroTime    = now;
       autoZeroStableCount = 0;
-      Memory_MarkDirty();
-      DEBUG_PRINTLN(F("Auto-zero: offset corrected"));
     }
   } else {
     autoZeroStableCount = 0;
   }
 }
 
-// ===== Тарирование (обнуление) весов =====
+// -------------------------------------------------------
+// Scale_Tare
+// -------------------------------------------------------
+// Тарирование: сохраняем backup offset/weight для undo,
+// затем вызываем scale.tare() и сбрасываем все внутренние буферы.
 bool Scale_Tare() {
   if (!scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
     current_weight = WEIGHT_ERROR_FLAG;
     return false;
   }
-
   if (current_weight < WEIGHT_ERROR_THRESHOLD ||
       fabs(current_weight) > WEIGHT_SANE_MAX) {
     return false;
   }
 
-  // Сохраняем резервную копию ДО изменений (для отмены)
-  savedData.backup_offset = savedData.tare_offset;
+  savedData.backup_offset      = savedData.tare_offset;
   savedData.backup_last_weight = savedData.last_weight;
 
-  // Выполняем тарирование
   scale.tare(HX711_SAMPLES_TARE);
   savedData.tare_offset = scale.get_offset();
 
-  // Сброс дельты сессии и сохранение в EEPROM
-  session_delta = 0.0;
-  savedData.last_weight = 0.0;
+  session_delta         = 0.0f;
+  savedData.last_weight = 0.0f;
   Memory_ForceSave();
 
-  undoAvailable = true;
-
-  // Сброс фильтра, стабильности и заморозки
-  filteredWeight = 0.0;
-  isFrozen = false;
-  display_weight = 0.0;
-  weightHistoryIdx = 0;
+  undoAvailable     = true;
+  current_weight    = 0.0f;
+  filteredWeight    = 0.0f;
+  isFrozen          = false;
+  display_weight    = 0.0f;
+  weightHistoryIdx  = 0;
   weightHistoryFull = false;
-  errorCount = 0;
-  medianCount = 0;
-  medianIdx = 0;
+  memset(weightHistory, 0, sizeof(weightHistory));
+  errorCount        = 0;
+  medianCount       = 0;
+  medianIdx         = 0;
   autoZeroStableCount = 0;
-  prevTrendWeight = 0.0;
-  weightTrend = 0;
+  prevTrendWeight   = 0.0f;
+  weightTrend       = 0;
   return true;
 }
 
-// ===== Отмена тарирования =====
+// -------------------------------------------------------
+// Scale_UndoTare
+// -------------------------------------------------------
+// Отмена тарирования: восстанавливаем backup offset/weight, сбрасываем буферы.
+// Доступно только один раз после тарирования (undoAvailable сбрасывается в false).
 bool Scale_UndoTare() {
-  if (!undoAvailable) {
-    return false;
-  }
+  if (!undoAvailable) return false;
 
   savedData.tare_offset = savedData.backup_offset;
   scale.set_offset(savedData.tare_offset);
@@ -296,32 +294,37 @@ bool Scale_UndoTare() {
     return false;
   }
 
+  // PI-9: session_delta сбрасываем до чтения как безопасное значение по умолчанию
+  session_delta = 0.0f;
   float w = scale.get_units(HX711_SAMPLES_UNDO);
   if (!isnan(w) && !isinf(w)) {
-    session_delta = w - savedData.last_weight;
+    session_delta  = w - savedData.last_weight;
+    current_weight = w;
     filteredWeight = w;
     display_weight = roundWeight(w);
     prevTrendWeight = w;
   }
   Memory_ForceSave();
 
-  undoAvailable = false;
-  isFrozen = false;
-  weightHistoryIdx = 0;
+  undoAvailable     = false;
+  isFrozen          = false;
+  weightHistoryIdx  = 0;
   weightHistoryFull = false;
-  errorCount = 0;
-  medianCount = 0;
-  medianIdx = 0;
+  memset(weightHistory, 0, sizeof(weightHistory));
+  errorCount        = 0;
+  medianCount       = 0;
+  medianIdx         = 0;
   autoZeroStableCount = 0;
-  weightTrend = 0;
+  weightTrend       = 0;
   return true;
 }
 
-// ===== Проверка стабильности показаний =====
+// -------------------------------------------------------
+// Вспомогательные геттеры
+// -------------------------------------------------------
 bool Scale_IsStable() {
   uint8_t count = weightHistoryFull ? STABILITY_WINDOW : weightHistoryIdx;
   if (count < 2) return false;
-
   float minVal = weightHistory[0];
   float maxVal = weightHistory[0];
   for (uint8_t i = 1; i < count; i++) {
@@ -331,33 +334,59 @@ bool Scale_IsStable() {
   return (maxVal - minVal) < STABILITY_THRESHOLD;
 }
 
-// ===== Проверка режима ожидания =====
-bool Scale_IsIdle() {
-  return Scale_IsStable() && (errorCount == 0);
-}
+bool Scale_IsIdle()      { return Scale_IsStable() && (errorCount == 0); }
+bool Scale_IsFrozen()    { return isFrozen; }
+bool Scale_IsOverloaded(){ return isOverloaded; }
+int8_t Scale_GetTrend()  { return weightTrend; }
 
-// ===== Проверка заморозки показаний =====
-bool Scale_IsFrozen() {
-  return isFrozen;
-}
-
-// ===== Auto-zero: включить/выключить =====
 void Scale_SetAutoZero(bool on) {
-  autoZeroEnabled = on;
+  autoZeroEnabled     = on;
   autoZeroStableCount = 0;
 }
 
-// ===== Auto-zero: получить состояние =====
-bool Scale_GetAutoZero() {
-  return autoZeroEnabled;
+bool Scale_GetAutoZero() { return autoZeroEnabled; }
+
+void Scale_SetTaraLock(bool on) {
+  // При включении Tara Lock отключаем auto-zero независимо от его настройки
+  if (on) {
+    autoZeroEnabled = false;
+  } else {
+    autoZeroEnabled = (savedData.auto_zero_on != 0);
+  }
+  autoZeroStableCount = 0;
 }
 
-// ===== Перегрузка: проверка =====
-bool Scale_IsOverloaded() {
-  return isOverloaded;
+// -------------------------------------------------------
+// Scale_PowerSave
+// PI-2 fix: сон разбит на шаги по LOOP_DELAY_MS с опросом кнопки,
+// иначе нажатия короче 250 мс в режиме ожидания полностью теряются.
+// -------------------------------------------------------
+void Scale_PowerSave(unsigned long ms) {
+  scale.power_down();
+  wifi_set_sleep_type(LIGHT_SLEEP_T);
+  autoZeroStableCount = 0; // сбрасываем счётчик — после сна первые чтения нестабильны
+
+  pendingAction = BTN_NONE;
+  unsigned long elapsed = 0;
+  while (elapsed < ms) {
+    unsigned long step = min((unsigned long)LOOP_DELAY_MS, ms - elapsed);
+    delay(step);
+    elapsed += step;
+    ButtonAction a = Button_Update();
+    // Сохраняем первое значимое действие — оно будет обработано в loop()
+    if (pendingAction == BTN_NONE && a != BTN_NONE && a != BTN_SHOW_HINT) {
+      pendingAction = a;
+    }
+    ESP.wdtFeed();
+  }
+
+  scale.power_up();
+  filterInitialized = false; // первое чтение после power_up нестабильно
 }
 
-// ===== Тренд: получить направление =====
-int8_t Scale_GetTrend() {
-  return weightTrend;
+ButtonAction Scale_GetPendingAction() {
+  ButtonAction a = pendingAction;
+  pendingAction = BTN_NONE;
+  return a;
 }
+

@@ -1,0 +1,25 @@
+# Arduino/C++ build artifacts
+build/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.hex
+*.bin
+*.elf
+
+# IDE and AI assistance directories
+.claude/
+.vscode/
+.idea/
+
+# Session logs and temporary notes
+SESSION_*.md
+SESSION_CHANGES.md
+QWEN.md
+
+# System files
+.DS_Store
+Thumbs.db

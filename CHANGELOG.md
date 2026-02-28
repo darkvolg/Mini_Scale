@@ -17,10 +17,11 @@
 | 8 | `bedcb50` | **Фикс**: валидация EEPROM, debounce, `math.h`, UX калибровки |
 | 9 | `4893483` | **10 улучшений**: стабилизация, splash-экран, низкий заряд, auto-dim, watchdog, HX711 timeout, EEPROM throttle, разделение .h/.cpp, неблокирующая кнопка, константы |
 | 10 | `24e1a06` | **Фикс**: `getTextBounds` для центрирования splash, периодическое сохранение EEPROM |
+| 11 | `v1.6.0` | **Большое обновление**: Меню настроек (6 параметров), Smart Start, 7 режимов калибровки, новые времена удержания кнопки |
 
 ## Архитектура (после рефакторинга)
 
-Проект разбит на 7 модулей (.h + .cpp):
+Проект разбит на 9 модулей (.h + .cpp):
 
 | Файл | Назначение |
 |------|-----------|
@@ -29,8 +30,12 @@
 | `ScaleControl` | HX711: чтение, тарирование, undo tare, стабилизация (ring buffer) |
 | `DisplayControl` | OLED: main screen, splash с progress bar, dim/wake, сообщения |
 | `ButtonControl` | State machine (IDLE→PRESSED→HOLDING→RELEASED), неблокирующая |
-| `CalibrationMode` | Режим калибровки: 5 подменю (+10, -10, +1, -1, SAVE) |
+| `CalibrationMode` | Режим калибровки: 7 подменю (+10, -10, +1, -1, +0.1, -0.1, SAVE) |
 | `MemoryControl` | EEPROM с magic number, валидацией, throttling (раз в 5 мин) |
+| `SettingsMode` | Меню настроек: Brightness, Auto Off, Auto Dim, Auto Zero, Units, Tara Lock |
+| `BatteryControl` | Мониторинг батареи: EMA сглаживание, проценты, критический разряд |
+| `CoreLogic` | Вспомогательные функции: классификация удержания, таймауты, wrap-around |
+| `UiText` | Текстовые сообщения UI в одном месте |
 
 ## Пины
 
@@ -43,35 +48,41 @@
 | D3 | Кнопка (INPUT_PULLUP) |
 | A0 | Батарея (через делитель, Vref=3.2V) |
 
-## Ключевые константы
+## Ключевые константы (v1.6.0)
 
-- **Auto-off**: 180 сек (3 мин) неактивности → deep sleep
-- **Auto-dim**: 30 сек неактивности → приглушение дисплея
-- **Кнопка**: удержание 5с = Tare, 10с = Undo Tare
+- **Auto-off**: 180 сек (3 мин) неактивности → deep sleep (настраивается: 1/3/5 мин или OFF)
+- **Auto-dim**: 60 сек неактивности → приглушение дисплея (настраивается: 30/60/120 сек)
+- **Кнопка**: удержание 2с = Меню, 10с = Tare, 15с = Undo Tare
 - **Калибровка**: вход — зажать кнопку при загрузке (окно 1 сек), длинное нажатие >0.8с = смена режима
 - **Стабилизация**: ring buffer 8 замеров, порог 0.03 кг
 - **Батарея**: EMA сглаживание (0.9/0.1), low=10%, critical=5% → shutdown
 - **EEPROM**: throttle записи — не чаще раз в 5 мин (кроме force save при tare/calibration)
 - **Default calibration**: 2280.0
+- **Smart Start**: показывать разницу при включении, если ≥ 0.05 кг
 
-## Все реализованные функции
+## Все реализованные функции (v1.6.0)
 
 1. **Измерение веса** — HX711, 3 сэмпла на чтение, отображение в кг с 2 знаками
 2. **Дельта сессии** — разница текущего веса и последнего сохранённого
 3. **Индикатор стабильности** — `=` (стабильно) / `~` (колеблется)
-4. **Tare** — обнуление, backup offset для undo
-5. **Undo Tare** — восстановление предыдущего offset и last_weight
-6. **Калибровка** — 5 режимов: +10, -10, +1, -1, SAVE & EXIT
-7. **Splash screen** — "Mini Scale" с progress bar при загрузке
-8. **Auto-dim** — приглушение экрана через 30 сек
-9. **Auto power off** — deep sleep через 3 мин
-10. **Мониторинг батареи** — piecewise linear LiPo%, EMA сглаживание
-11. **Low battery blink** — мигание строки батареи при <10%
-12. **Critical shutdown** — deep sleep при <5% (с grace period 10 циклов)
-13. **EEPROM persistence** — magic number, валидация NaN/Inf, throttled save
-14. **Watchdog** — `ESP.wdtFeed()` в loop и калибровке
-15. **HX711 timeout** — `wait_ready_timeout(500ms)` вместо бесконечного ожидания
-16. **Неблокирующая кнопка** — state machine вместо blocking `while`
+4. **Tare** — обнуление, backup offset для undo (удержание 10 сек)
+5. **Undo Tare** — восстановление предыдущего offset (удержание 15 сек)
+6. **Меню настроек** — 6 параметров: Brightness, Auto Off, Auto Dim, Auto Zero, Units, Tara Lock
+7. **Калибровка** — 7 режимов: +10, -10, +1, -1, +0.1, -0.1, SAVE & EXIT
+8. **Splash screen** — "Mini Scale" с progress bar при загрузке
+9. **Auto-dim** — приглушение экрана через 60 сек (настраивается)
+10. **Auto power off** — deep sleep через 3 мин (настраивается)
+11. **Мониторинг батареи** — piecewise linear LiPo%, EMA сглаживание
+12. **Low battery blink** — мигание строки батареи при <10%
+13. **Critical shutdown** — deep sleep при <5% (с grace period 10 циклов)
+14. **EEPROM persistence** — magic number, валидация NaN/Inf, throttled save
+15. **Watchdog** — `ESP.wdtFeed()` в loop и калибровке
+16. **HX711 timeout** — `wait_ready_timeout(500ms)` вместо бесконечного ожидания
+17. **Неблокирующая кнопка** — state machine вместо blocking `while`
+18. **Smart Start** — показ разницы с последним весом при включении (≥ 50 г)
+19. **Единицы измерения** — переключение кг/г через меню
+20. **Tara Lock** — блокировка случайного сброса тары
+21. **Auto Zero** — авто-нуль для стабилизации показаний
 
 ## Библиотеки (Arduino)
 

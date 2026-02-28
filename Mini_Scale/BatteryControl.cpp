@@ -1,62 +1,66 @@
 #include "BatteryControl.h"
 #include <Arduino.h>
 
-// Сглаженное значение АЦП (экспоненциальное скользящее среднее)
+// EMA-сглаженное значение ADC батареи (0..1023)
 static float smoothed_bat_raw = 0;
-// Вычисленное напряжение батареи (вольт)
-static float bat_voltage = 0.0;
-// Процент заряда (0..100)
+// Текущее напряжение батареи в вольтах
+static float bat_voltage = 0.0f;
+// Текущий заряд в процентах (0..100)
 static int bat_percent = 0;
 
-// Состояние мигания иконки батареи
+// Текущая фаза мигания иконки (true = иконка скрыта)
 static bool blinkState = false;
+// Момент последнего переключения фазы мигания
 static unsigned long lastBlinkToggle = 0;
-
-// Троттлинг чтения АЦП: читаем не чаще BAT_READ_INTERVAL_MS
+// Момент последнего считывания ADC
 static unsigned long lastBatRead = 0;
+// До этого момента Battery_IsCritical() всегда возвращает false (защита от ложного срабатывания при старте)
+static unsigned long graceUntil = 0;
 
-// Период отсрочки: пропускаем критическое отключение первые N циклов,
-// чтобы АЦП успел стабилизироваться после включения.
-// При BAT_READ_INTERVAL_MS=5000 и loop=100мс нужно минимум 50 циклов
-// до первого реального чтения + запас. Ставим 80 (~8 секунд).
-static uint8_t graceLoops = 80;
-
-// ===== Кусочно-линейная аппроксимация: напряжение LiPo -> процент =====
-// Таблица соответствия напряжения литий-полимерного аккумулятора
-// и примерного процента заряда. Интерполяция между точками.
+// Перевод напряжения LiPo в проценты по кусочно-линейной кривой разряда
 static int lipoPercent(float voltage) {
-  if (voltage >= 4.15) return 100;
-  if (voltage >= 4.00) return (int)(90 + (voltage - 4.00) / (4.15 - 4.00) * 10 + 0.5);
-  if (voltage >= 3.85) return (int)(70 + (voltage - 3.85) / (4.00 - 3.85) * 20 + 0.5);
-  if (voltage >= 3.73) return (int)(40 + (voltage - 3.73) / (3.85 - 3.73) * 30 + 0.5);
-  if (voltage >= 3.60) return (int)(15 + (voltage - 3.60) / (3.73 - 3.60) * 25 + 0.5);
-  if (voltage >= 3.40) return (int)(5  + (voltage - 3.40) / (3.60 - 3.40) * 10 + 0.5);
-  if (voltage >= 3.20) return (int)((voltage - 3.20) / (3.40 - 3.20) * 5 + 0.5);
+  if (voltage >= 4.15f) return 100;
+  if (voltage >= 4.00f) return (int)(90 + (voltage - 4.00f) / (4.15f - 4.00f) * 10 + 0.5f);
+  if (voltage >= 3.85f) return (int)(70 + (voltage - 3.85f) / (4.00f - 3.85f) * 20 + 0.5f);
+  if (voltage >= 3.73f) return (int)(40 + (voltage - 3.73f) / (3.85f - 3.73f) * 30 + 0.5f);
+  if (voltage >= 3.60f) return (int)(15 + (voltage - 3.60f) / (3.73f - 3.60f) * 25 + 0.5f);
+  if (voltage >= 3.40f) return (int)(5  + (voltage - 3.40f) / (3.60f - 3.40f) * 10 + 0.5f);
+  if (voltage >= 3.20f) return (int)((voltage - 3.20f) / (3.40f - 3.20f) * 5 + 0.5f);
   return 0;
 }
 
-// ===== Инициализация модуля батареи =====
-// Считывает начальное значение АЦП и вычисляет напряжение/процент.
+// Линейный перевод напряжения в проценты (запасной вариант, если BAT_PROFILE_LIPO=0)
+static int linearPercent(float voltage) {
+  if (voltage <= BAT_LINEAR_EMPTY_V) return 0;
+  if (voltage >= BAT_LINEAR_FULL_V) return 100;
+  return (int)(((voltage - BAT_LINEAR_EMPTY_V) * 100.0f) /
+               (BAT_LINEAR_FULL_V - BAT_LINEAR_EMPTY_V) + 0.5f);
+}
+
+// Выбор профиля разряда в зависимости от дефайна BAT_PROFILE_LIPO
+static int voltageToPercent(float voltage) {
+#if BAT_PROFILE_LIPO
+  return lipoPercent(voltage);
+#else
+  return linearPercent(voltage);
+#endif
+}
+
+// Первоначальное считывание ADC и инициализация EMA.
+// graceUntil защищает от ложного критического срабатывания сразу после старта.
 void Battery_Init() {
   smoothed_bat_raw = analogRead(BATTERY_PIN);
   bat_voltage = (smoothed_bat_raw / BAT_ADC_MAX) * BAT_VOLTAGE_REF / BAT_DIVIDER_RATIO;
-  bat_percent = constrain(lipoPercent(bat_voltage), 0, 100);
+  bat_percent = constrain(voltageToPercent(bat_voltage), 0, 100);
   lastBatRead = millis();
+  graceUntil = millis() + BAT_GRACE_MS;
 }
 
-// ===== Обновление показаний батареи =====
-// Вызывается каждый цикл loop(). Внутри — троттлинг: АЦП читается
-// не чаще одного раза в BAT_READ_INTERVAL_MS. Мигание иконки
-// обновляется каждый вызов при низком заряде.
+// Обновление состояния батареи — вызывается каждый loop().
+// Мигание обновляется всегда; ADC считывается не чаще BAT_READ_INTERVAL_MS.
 void Battery_Update() {
   unsigned long now = millis();
 
-  // Обратный отсчёт периода отсрочки (по одному за каждый вызов)
-  if (graceLoops > 0) {
-    graceLoops--;
-  }
-
-  // Переключение состояния мигания при низком заряде
   if (bat_percent < BAT_LOW_PERCENT) {
     if (now - lastBlinkToggle >= BLINK_INTERVAL_MS) {
       blinkState = !blinkState;
@@ -64,54 +68,28 @@ void Battery_Update() {
     }
   }
 
-  // Троттлинг: пропускаем чтение АЦП, если ещё не время
   if (now - lastBatRead < BAT_READ_INTERVAL_MS) {
     return;
   }
   lastBatRead = now;
 
-  // Чтение АЦП и применение EMA-фильтра для сглаживания
   int raw = analogRead(BATTERY_PIN);
   smoothed_bat_raw = (smoothed_bat_raw * BAT_EMA_OLD) + (raw * BAT_EMA_NEW);
 
-  // Пересчёт напряжения и процента заряда с учётом делителя напряжения
   bat_voltage = (smoothed_bat_raw / BAT_ADC_MAX) * BAT_VOLTAGE_REF / BAT_DIVIDER_RATIO;
-  bat_percent = lipoPercent(bat_voltage);
-  bat_percent = constrain(bat_percent, 0, 100);
+  bat_percent = constrain(voltageToPercent(bat_voltage), 0, 100);
 }
 
-// Получить текущее напряжение батареи
-float Battery_GetVoltage() {
-  return bat_voltage;
-}
+float Battery_GetVoltage() { return bat_voltage; }
+int Battery_GetPercent() { return bat_percent; }
+bool Battery_IsLow() { return bat_percent < BAT_LOW_PERCENT; }
 
-// Получить процент заряда батареи
-int Battery_GetPercent() {
-  return bat_percent;
-}
-
-// Проверка: заряд ниже порога низкого заряда?
-bool Battery_IsLow() {
-  return bat_percent < BAT_LOW_PERCENT;
-}
-
-// Проверка: заряд критически низкий?
-// Возвращает true только после окончания периода отсрочки (graceLoops),
-// чтобы не отключить устройство из-за нестабильного АЦП при запуске.
-// Дополнительно: если ADC < 50 (напряжение < ~0.16V) — батарея не подключена,
-// игнорируем критическое состояние.
 bool Battery_IsCritical() {
-  if (graceLoops > 0) return false;
-  if (smoothed_bat_raw < BAT_MIN_ADC_CONNECTED) return false; // батарея не подключена
+  if ((long)(millis() - graceUntil) < 0) return false; // корректная проверка с учётом переполнения millis()
+  if (smoothed_bat_raw < BAT_MIN_ADC_CONNECTED) return false;
   return (bat_percent <= BAT_CRITICAL_PERCENT);
 }
 
-// Текущая фаза мигания иконки батареи.
-// Возвращает true в фазе "скрыто" — иконка исчезает.
-// При нормальном заряде всегда возвращает false.
 bool Battery_BlinkPhase() {
-  if (bat_percent < BAT_LOW_PERCENT) {
-    return blinkState;
-  }
-  return false;
+  return (bat_percent < BAT_LOW_PERCENT) ? blinkState : false;
 }

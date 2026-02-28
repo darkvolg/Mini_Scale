@@ -1,7 +1,11 @@
 #pragma once
 
-// ===================== Отладка =====================
-#define DEBUG_ENABLED  // Закомментировать для отключения отладки
+// ===================== Debug =====================
+// Build release with -DMINI_SCALE_RELEASE to disable serial logs.
+#if !defined(MINI_SCALE_RELEASE)
+  #define DEBUG_ENABLED
+#endif
+
 #ifdef DEBUG_ENABLED
   #define DEBUG_PRINT(x)    Serial.print(x)
   #define DEBUG_PRINTLN(x)  Serial.println(x)
@@ -12,132 +16,121 @@
   #define DEBUG_PRINTF(fmt, ...)
 #endif
 
-// ===================== Конфигурация пинов =====================
-#define DOUT_PIN D6          // Пин данных HX711
-#define SCK_PIN D5           // Пин тактового сигнала HX711
-#define BUTTON_PIN D3        // Пин кнопки (с подтяжкой к питанию)
-#define BATTERY_PIN A0       // Аналоговый пин для измерения напряжения батареи
+// ===================== Pins =====================
+#define DOUT_PIN D6
+#define SCK_PIN D5
+#define BUTTON_PIN D3
+#define BATTERY_PIN A0
 
-// ===================== Дисплей =====================
-#define SCREEN_WIDTH 128     // Ширина OLED-дисплея в пикселях
-#define SCREEN_HEIGHT 64     // Высота OLED-дисплея в пикселях
-#define OLED_I2C_ADDR 0x3C   // I2C-адрес дисплея SSD1306
-#define OLED_RESET_PIN (-1)  // Пин сброса дисплея (-1 = не используется)
+// ===================== Display =====================
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_I2C_ADDR 0x3C
+#define OLED_RESET_PIN (-1)
 
-// ===================== Яркость дисплея =====================
-#define DIM_BRIGHTNESS        0x00   // Яркость в режиме затухания (минимальная)
-#define NORMAL_BRIGHTNESS     0xCF   // Яркость в нормальном режиме (максимальная)
-#define DIM_FADE_STEPS        8      // Количество шагов плавного затухания
-#define DIM_FADE_STEP_MS      60     // Задержка между шагами затухания (мс)
-#define WAKE_FADE_STEPS       3      // Количество шагов плавного пробуждения
-#define WAKE_FADE_STEP_MS     40     // Задержка между шагами пробуждения (мс)
+#define DIM_BRIGHTNESS        0x00
+#define NORMAL_BRIGHTNESS     0xCF
+#define DIM_FADE_STEPS        8
+#define DIM_FADE_STEP_MS      60
+#define WAKE_FADE_STEPS       3
+#define WAKE_FADE_STEP_MS     40
 
-// Уровни яркости для меню настроек
 #define BRIGHTNESS_LOW        0x40
 #define BRIGHTNESS_MED        0x8F
 #define BRIGHTNESS_HIGH       0xCF
 
-// ===================== Версия прошивки =====================
-#define FIRMWARE_VERSION        3    // Версия формата данных EEPROM (v3: настройки)
-#define FW_VERSION_STR    "v1.5.0"   // Строковая версия для отображения
+// ===================== Version =====================
+#define FIRMWARE_VERSION          4
+#define PREVIOUS_FIRMWARE_VERSION 3
+#define FW_VERSION_STR            "v1.6.0"
 
-// ===================== Параметры весов по умолчанию =====================
-#define DEFAULT_CALIBRATION 2280.0f  // Калибровочный коэффициент по умолчанию
+// ===================== Defaults =====================
+#define DEFAULT_CALIBRATION 2280.0f
 
-// ===================== Таймеры и задержки =====================
-#define DEBOUNCE_MS             50       // Антидребезг кнопки (мс)
-#define LOOP_DELAY_MS           100      // Задержка основного цикла (мс)
-#define LOOP_DELAY_IDLE_MS      250      // Задержка цикла в режиме ожидания (мс)
-#define AUTO_OFF_MS             180000UL // Авто-выключение через 3 минуты бездействия
-#define AUTO_DIM_MS             60000UL  // Затухание дисплея через 60 секунд бездействия
-#define AUTO_OFF_MSG_MS         7000     // Время показа сообщения перед выключением (мс)
-#define CAL_ENTRY_WINDOW_MS     1000UL   // Окно входа в режим калибровки при запуске (мс)
-#define CAL_LONG_PRESS_MS       800      // Длительное нажатие для переключения режима калибровки (мс)
-#define CAL_SAVED_MSG_MS        2000     // Время показа сообщения "Сохранено" (мс)
-#define BUTTON_TARE_MS          5000UL   // Удержание кнопки для тарирования (5 секунд)
-#define BUTTON_UNDO_MS          10000UL  // Удержание кнопки для отмены тарирования (10 секунд)
-#define SUCCESS_MSG_MS          2000     // Время показа сообщения об успешной операции (мс)
-#define HX711_INIT_DELAY_MS     500      // Задержка инициализации HX711 (мс)
-#define HX711_TIMEOUT_MS        500      // Таймаут ожидания готовности HX711 (мс)
+// ===================== Timers =====================
+#define DEBOUNCE_MS             30
+#define LOOP_DELAY_MS           30
+#define LOOP_DELAY_IDLE_MS      250
+#define AUTO_OFF_MS             180000UL
+#define AUTO_DIM_MS             60000UL
+#define AUTO_OFF_MSG_MS         7000
+#define CAL_ENTRY_WINDOW_MS     1000UL
+#define CAL_LONG_PRESS_MS       800
+#define CAL_SAVED_MSG_MS        2000
+#define BUTTON_TARE_MS          10000UL
+#define BUTTON_UNDO_MS          15000UL
+#define SUCCESS_MSG_MS          2000
+#define HX711_INIT_DELAY_MS     500
+#define HX711_TIMEOUT_MS        500
 
-// ===================== Двойное нажатие (настройки) =====================
-#define DOUBLE_TAP_WINDOW_MS    500      // Максимальный интервал между двумя нажатиями (мс)
-#define DOUBLE_TAP_MAX_MS       300      // Максимальная длительность одного нажатия (мс)
+#define MENU_HOLD_MS            2000UL
+#define MENU_CONFIRM_WINDOW_MS  3000UL
 
-// ===================== Количество выборок HX711 =====================
-#define HX711_SAMPLES_STARTUP   10  // Выборки при запуске (для точного начального значения)
-#define HX711_SAMPLES_READ      3   // Выборки при обычном чтении
-#define HX711_SAMPLES_TARE      10  // Выборки при тарировании
-#define HX711_SAMPLES_UNDO      5   // Выборки при отмене тарирования
-#define HX711_SAMPLES_CAL       3   // Выборки в режиме калибровки
+#define SETTINGS_IDLE_TIMEOUT_MS  30000UL
+#define CAL_IDLE_TIMEOUT_MS       60000UL
 
-// ===================== Батарея =====================
-#define BAT_EMA_OLD             0.9f     // Вес старого значения в EMA-фильтре батареи
-#define BAT_EMA_NEW             0.1f     // Вес нового значения в EMA-фильтре батареи
-#define BAT_ADC_MAX             1023.0f  // Максимальное значение АЦП (10 бит)
-#define BAT_VOLTAGE_REF         3.2f     // Опорное напряжение АЦП Wemos A0 (вольт)
-// Коэффициент делителя напряжения: R2/(R1+R2).
-// Пример: R1=100кОм (к батарее), R2=220кОм (к GND) → 220/(100+220) = 0.6875
-// Установите 1.0 если батарея подключена напрямую через встроенный делитель Wemos
-// (встроенный делитель Wemos рассчитан на 3.2V max на пине A0, т.е. коэффициент уже учтён)
-#define BAT_DIVIDER_RATIO       1.0f     // Изменить при использовании внешнего делителя
-#define BAT_MIN_ADC_CONNECTED   50       // Минимальный ADC (~0.16V) для определения подключённой батареи
-#define BAT_LOW_PERCENT         10       // Порог низкого заряда (%) — начинает мигать иконка
-#define BAT_CRITICAL_PERCENT    5        // Порог критического заряда (%)
-#define BLINK_INTERVAL_MS       1500     // Интервал мигания иконки батареи (мс)
-#define BAT_READ_INTERVAL_MS    5000UL   // Интервал чтения АЦП батареи (мс)
+// ===================== HX711 =====================
+#define HX711_SAMPLES_STARTUP   10
+#define HX711_SAMPLES_READ      3
+#define HX711_SAMPLES_TARE      10
+#define HX711_SAMPLES_UNDO      5
+#define HX711_SAMPLES_CAL       3
 
-// ===================== Вес =====================
-#define WEIGHT_ERROR_FLAG       (-99.9f) // Флаг ошибки чтения веса
-#define WEIGHT_ERROR_THRESHOLD  (-99.0f) // Порог определения ошибки
-#define WEIGHT_CHANGE_THRESHOLD 0.05f    // Порог значимого изменения веса (кг)
-#define WEIGHT_SANE_MAX         500.0f   // Максимально допустимый вес (кг)
-#define WEIGHT_EMA_ALPHA        0.3f     // Коэффициент EMA-фильтра веса (0..1)
-#define WEIGHT_FREEZE_THRESHOLD 0.02f    // Порог заморозки показаний на дисплее (кг)
-#define HX711_ERROR_COUNT_MAX   3        // Макс. подряд ошибок до отображения "ERROR"
+// ===================== Battery =====================
+#define BAT_EMA_OLD             0.9f
+#define BAT_EMA_NEW             0.1f
+#define BAT_ADC_MAX             1023.0f
+#define BAT_VOLTAGE_REF         3.2f
+#define BAT_DIVIDER_RATIO       1.0f
+#define BAT_MIN_ADC_CONNECTED   50
+#define BAT_LOW_PERCENT         10
+#define BAT_CRITICAL_PERCENT    5
+#define BLINK_INTERVAL_MS       1500
+#define BAT_READ_INTERVAL_MS    5000UL
+#define BAT_GRACE_MS            10000UL
+#define BAT_PROFILE_LIPO        1
+#define BAT_LINEAR_EMPTY_V      3.20f
+#define BAT_LINEAR_FULL_V       4.20f
 
-// ===================== Медианный фильтр =====================
-#define MEDIAN_WINDOW           3        // Размер медианного фильтра (3 значения)
+// ===================== Weight =====================
+#define WEIGHT_ERROR_FLAG       (-99.9f)
+#define WEIGHT_ERROR_THRESHOLD  (-99.0f)
+#define WEIGHT_CHANGE_THRESHOLD 0.05f
+#define WEIGHT_SANE_MAX         500.0f
+#define WEIGHT_EMA_ALPHA        0.3f
+#define WEIGHT_FREEZE_THRESHOLD 0.02f
+#define HX711_ERROR_COUNT_MAX   3
 
-// ===================== Auto-zero tracking =====================
-#define AUTOZERO_THRESHOLD      0.05f    // Порог автокоррекции нуля (кг)
-#define AUTOZERO_STEP           1        // Шаг коррекции tare_offset
-#define AUTOZERO_INTERVAL_MS    3000UL   // Минимальный интервал коррекции (мс)
-#define AUTOZERO_MIN_STABLE_CYCLES 5     // Минимум стабильных циклов перед коррекцией
+#define MEDIAN_WINDOW           3
 
-// ===================== Перегрузка =====================
-#define WEIGHT_OVERLOAD_KG      5.0f     // Максимальная допустимая нагрузка (кг)
+#define AUTOZERO_THRESHOLD      0.05f
+#define AUTOZERO_STEP           1
+#define AUTOZERO_INTERVAL_MS    3000UL
+#define AUTOZERO_MIN_STABLE_CYCLES 5
 
-// ===================== Тренд (стрелка направления) =====================
-#define TREND_THRESHOLD         0.03f    // Минимальная разница для отображения тренда (кг)
+#define WEIGHT_OVERLOAD_KG      5.0f
+#define TREND_THRESHOLD         0.03f
 
 // ===================== EEPROM =====================
-#define EEPROM_SLOTS            4            // Количество слотов износовыравнивания
-#define MAGIC_NUMBER            0x2A2B3CUL   // Магическое число для проверки целостности данных
-#define CAL_FACTOR_MIN          1.0f         // Минимальный калибровочный коэффициент
-#define CAL_FACTOR_MAX          100000.0f    // Максимальный калибровочный коэффициент
+#define EEPROM_SLOTS            4
+#define MAGIC_NUMBER            0x2A2B3CUL
+#define CAL_FACTOR_MIN          1.0f
+#define CAL_FACTOR_MAX          100000.0f
+#define STABILITY_WINDOW        8
+#define STABILITY_THRESHOLD     0.03f
+#define SERIAL_BAUD             115200
+#define EEPROM_MIN_INTERVAL_MS  300000UL
 
-// ===================== Стабильность показаний =====================
-#define STABILITY_WINDOW        8      // Размер кольцевого буфера для оценки стабильности
-#define STABILITY_THRESHOLD     0.03f  // Порог стабильности (макс. разброс в буфере, кг)
+// ===================== UI Defaults =====================
+#define DEFAULT_BRIGHTNESS_LEVEL  2
+#define DEFAULT_AUTO_OFF_MODE     1
+#define DEFAULT_AUTO_DIM_MODE     1
+#define DEFAULT_AUTO_ZERO_ON      1
+#define DEFAULT_UNITS_MODE        0
+#define DEFAULT_TARA_LOCK_ON      0
 
-// ===================== Последовательный порт =====================
-#define SERIAL_BAUD             115200  // Скорость последовательного порта
-
-// ===================== Ограничение записи EEPROM =====================
-#define EEPROM_MIN_INTERVAL_MS  300000UL  // Минимальный интервал записи в EEPROM (5 минут)
-
-// ===================== Настройки по умолчанию (меню) =====================
-#define DEFAULT_BRIGHTNESS_LEVEL  2   // HIGH (0=LOW, 1=MED, 2=HIGH)
-#define DEFAULT_AUTO_OFF_MODE     1   // 3 мин (0=1мин, 1=3мин, 2=5мин, 3=OFF)
-#define DEFAULT_AUTO_DIM_MODE     1   // 60с (0=30с, 1=60с, 2=120с)
-#define DEFAULT_AUTO_ZERO_ON      1   // Включен (0=OFF, 1=ON)
-#define DEFAULT_UNITS_MODE        0   // кг (0=кг, 1=г)
-
-// Значения таймеров автовыключения по индексу
 #define AUTO_OFF_VALUES_COUNT     4
-// 60000, 180000, 300000, 0 (OFF) — используются в коде как массив
-
-// Значения таймеров автозатухания по индексу
 #define AUTO_DIM_VALUES_COUNT     3
-// 30000, 60000, 120000 — используются в коде как массив
+
+// ===================== Smart Start =====================
+#define SMART_START_MIN_DELTA     0.05f   // минимальная разница для показа (кг)

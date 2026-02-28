@@ -1,9 +1,9 @@
 #pragma once
+#include <Arduino.h>
 
-// Запуск меню настроек.
-// Блокирующая функция — возвращает управление после выхода из меню.
-void RunSettingsMode();
+// Экспортируемые таблицы значений (определены в SettingsMode.cpp)
+extern const unsigned long autoOffValues[];
+extern const unsigned long autoDimValues[];
 
-// Применить загруженные настройки из EEPROM к модулям.
-// Вызывается при запуске и после выхода из меню настроек.
-void ApplySettings();
+void RunSettingsMode();   // Вход в меню настроек (блокирующая)
+void ApplySettings();    // Применить яркость и авто-ноль из EEPROM

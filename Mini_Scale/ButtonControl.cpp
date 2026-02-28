@@ -1,154 +1,130 @@
 #include "ButtonControl.h"
 #include <Arduino.h>
+#include "CoreLogic.h"
 
-// Текущее состояние конечного автомата кнопки
 static ButtonState btnState = BTN_IDLE;
-// Время начала удержания кнопки
-static unsigned long btnPressTime = 0;
-// Время последнего изменения состояния (для антидребезга)
-static unsigned long btnDebounceTime = 0;
 
-// ===== Двойное нажатие =====
-// Время отпускания после первого короткого нажатия
-static unsigned long firstTapReleaseTime = 0;
-// Длительность первого нажатия
-static unsigned long firstTapDuration = 0;
+static unsigned long btnPressTime    = 0;  // момент подтверждённого нажатия
+static unsigned long btnDebounceTime = 0;  // момент начала антидребезга
+static unsigned long menuPromptTime  = 0;  // момент когда показали "Press again"
+
+// Флаг: "Press again" уже показано, ждём второго нажатия
+static bool menuPromptActive = false;
 
 // ===== Инициализация кнопки =====
 void Button_Init() {
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 }
 
-// ===== Опрос кнопки (конечный автомат) =====
-// Неблокирующая обработка кнопки с антидребезгом нажатия и отпускания.
-// Поддерживает двойное нажатие (BTN_DOUBLE_TAP).
-//
-// Логика двойного нажатия:
-// Если нажатие короткое (< DOUBLE_TAP_MAX_MS), вместо игнорирования
-// переходим в BTN_WAIT_DOUBLE. Если второе нажатие приходит в течение
-// DOUBLE_TAP_WINDOW_MS и тоже короткое — возвращаем BTN_DOUBLE_TAP.
-// Если таймаут истёк — просто BTN_NONE.
+// ===== Опрос кнопки =====
 ButtonAction Button_Update() {
   bool pressed = (digitalRead(BUTTON_PIN) == LOW);
   unsigned long now = millis();
 
   switch (btnState) {
+
+    // -- Ожидание нажатия ----------------------------------------
     case BTN_IDLE:
+      // Проверяем окно ожидания второго нажатия
+      if (menuPromptActive) {
+        if (CoreLogic::TimeoutElapsed(now, menuPromptTime, MENU_CONFIRM_WINDOW_MS)) {
+          // Время вышло — отмена
+          menuPromptActive = false;
+          DEBUG_PRINTLN(F("[BTN] menu confirm window expired"));
+          return BTN_MENU_CANCEL;
+        }
+      }
       if (pressed) {
         btnDebounceTime = now;
-        btnState = BTN_PRESSED;
+        btnState = BTN_DEBOUNCE_PRESS;
       }
       return BTN_NONE;
 
-    case BTN_PRESSED:
-      // Ждём окончания периода антидребезга
+    // -- Антидребезг нажатия -------------------------------------
+    case BTN_DEBOUNCE_PRESS:
       if (now - btnDebounceTime < DEBOUNCE_MS) {
         return BTN_NONE;
       }
       if (pressed) {
-        // Нажатие подтверждено после антидребезга.
-        // Время нажатия фиксируем с момента первого обнаружения (btnDebounceTime),
-        // иначе elapsed будет занижен на DEBOUNCE_MS и при быстром нажатии
-        // unsigned-вычитание переполнится → огромное число → ложный UNDO/TARE.
-        btnPressTime = btnDebounceTime;
+        // Нажатие подтверждено
+        if (menuPromptActive) {
+          // Второе нажатие после "Press again" — входим в меню
+          menuPromptActive = false;
+          btnState = BTN_IDLE;
+          lastActivityTime = now;
+          DEBUG_PRINTLN(F("[BTN] MENU ENTER"));
+          return BTN_MENU_ENTER;
+        }
+        btnPressTime = now;
         btnState = BTN_HOLDING;
         lastActivityTime = now;
+        DEBUG_PRINTLN(F("[BTN] press confirmed, holding..."));
         return BTN_SHOW_HINT;
       } else {
-        // Кнопка отпущена во время антидребезга — ложное срабатывание
+        // Дребезг — назад
         btnState = BTN_IDLE;
         return BTN_NONE;
       }
 
+    // -- Кнопка удерживается -------------------------------------
     case BTN_HOLDING:
       if (pressed) {
+        unsigned long held = now - btnPressTime;
+
+        // Достигли порога входа в меню — показываем "Press again"
+        if (!menuPromptActive && held >= MENU_HOLD_MS && held < BUTTON_TARE_MS) {
+          menuPromptActive = true;
+          menuPromptTime = now;
+          DEBUG_PRINTLN(F("[BTN] menu prompt shown"));
+          return BTN_MENU_PROMPT;
+        }
+
         return BTN_SHOW_HINT;
       } else {
-        // Кнопка отпущена — начинаем антидребезг отпускания
-        btnState = BTN_RELEASED;
+        // Кнопку отпустили
         btnDebounceTime = now;
-        return BTN_SHOW_HINT;
+        btnState = BTN_DEBOUNCE_RELEASE;
+        return BTN_NONE;
       }
 
-    case BTN_RELEASED: {
-      // Ждём окончания антидребезга отпускания
+    // -- Антидребезг отпускания ----------------------------------
+    case BTN_DEBOUNCE_RELEASE:
       if (now - btnDebounceTime < DEBOUNCE_MS) {
         return BTN_NONE;
       }
       if (pressed) {
-        // Кнопка снова замкнулась (дребезг) — возвращаемся к удержанию
+        // Снова нажата — продолжаем удержание
         btnState = BTN_HOLDING;
         return BTN_SHOW_HINT;
       }
-
-      // Кнопка окончательно отпущена — определяем действие по времени удержания.
-      // elapsed = от начала нажатия до начала debounce отпускания (реальное время удержания).
-      // Используем btnDebounceTime (момент отпускания) вместо now, чтобы не включать
-      // время ожидания debounce отпускания в длительность нажатия.
-      unsigned long elapsed = btnDebounceTime - btnPressTime;
-      lastActivityTime = now;
-
-      if (elapsed > BUTTON_UNDO_MS) {
+      // Кнопка отпущена — определяем действие по длительности
+      {
+        // Используем now (уже прошли антидребезг), а не btnDebounceTime
+        // (момент начала антидребезга), чтобы не занижать elapsed на DEBOUNCE_MS
+        unsigned long elapsed = now - btnPressTime;
+        lastActivityTime = now;
         btnState = BTN_IDLE;
-        return BTN_UNDO;  // Отмена тарирования
-      } else if (elapsed > BUTTON_TARE_MS) {
-        btnState = BTN_IDLE;
-        return BTN_TARE;  // Тарирование
-      }
 
-      // Короткое нажатие — возможно первый тап из double-tap
-      if (elapsed <= DOUBLE_TAP_MAX_MS) {
-        firstTapReleaseTime = now;
-        firstTapDuration = elapsed;
-        btnState = BTN_WAIT_DOUBLE;
-        return BTN_NONE;
-      }
+        DEBUG_PRINTF("[BTN] released, elapsed=%lums\n", elapsed);
 
-      // Нажатие не короткое и не длинное — игнорируем
-      btnState = BTN_IDLE;
-      return BTN_NONE;
-    }
-
-    case BTN_WAIT_DOUBLE: {
-      // Ожидание второго нажатия
-      if (now - firstTapReleaseTime > DOUBLE_TAP_WINDOW_MS) {
-        // Таймаут — двойного нажатия не было
-        btnState = BTN_IDLE;
-        return BTN_NONE;
-      }
-
-      if (pressed) {
-        // Антидребезг второго нажатия
-        delay(DEBOUNCE_MS);
-        if (digitalRead(BUTTON_PIN) != LOW) {
-          return BTN_NONE; // Ложное срабатывание
+        CoreLogic::HoldAction holdAction = CoreLogic::ClassifyHoldDuration(elapsed, MENU_HOLD_MS, BUTTON_TARE_MS, BUTTON_UNDO_MS);
+        if (holdAction == CoreLogic::HOLD_UNDO) {
+          menuPromptActive = false;
+          return BTN_UNDO;
+        }
+        if (holdAction == CoreLogic::HOLD_TARE) {
+          menuPromptActive = false;
+          return BTN_TARE;
         }
 
-        // Ждём отпускания второго нажатия
-        unsigned long press2Start = millis();
-        while (digitalRead(BUTTON_PIN) == LOW) {
-          ESP.wdtFeed();
-          delay(5);
-          // Если удержание слишком долгое — это не double-tap
-          if (millis() - press2Start > DOUBLE_TAP_MAX_MS) {
-            // Слишком долго — переходим в HOLDING
-            btnPressTime = press2Start;
-            btnState = BTN_HOLDING;
-            lastActivityTime = millis();
-            return BTN_SHOW_HINT;
-          }
-        }
-        delay(DEBOUNCE_MS);
-
-        // Второе нажатие короткое — подтверждённый double-tap
-        btnState = BTN_IDLE;
-        lastActivityTime = millis();
-        return BTN_DOUBLE_TAP;
+        // Отпустили до порога TARE — если menuPromptActive уже установлен
+        // (держали >= 2 сек но < 10 сек), просто ждём второго нажатия.
+        // BTN_MENU_PROMPT уже был послан при достижении порога.
+        // Сброс menuPromptActive здесь НЕ делаем — ожидание продолжается.
+        return BTN_NONE;
       }
-
-      return BTN_NONE;
-    }
   }
+
   return BTN_NONE;
 }
 
@@ -158,10 +134,11 @@ bool Button_IsHolding() {
 }
 
 // Время удержания кнопки в миллисекундах.
-// Возвращает 0, если кнопка не удерживается.
 unsigned long Button_HoldElapsed() {
   if (btnState == BTN_HOLDING) {
     return millis() - btnPressTime;
   }
   return 0;
 }
+
+

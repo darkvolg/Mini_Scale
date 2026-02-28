@@ -12,10 +12,14 @@ enum FadeState {
 
 static FadeState fadeState = FADE_IDLE;
 static bool displayDimmed = false;
-static uint8_t currentNormalBrightness = NORMAL_BRIGHTNESS; // Настраиваемая яркость
-static uint8_t fadeBrightness = NORMAL_BRIGHTNESS;          // Текущая яркость
-static int fadeStepsLeft = 0;                                // Оставшиеся шаги
-static unsigned long lastFadeStepTime = 0;                   // Время последнего шага
+static uint8_t currentNormalBrightness = NORMAL_BRIGHTNESS;
+static uint8_t fadeBrightness = NORMAL_BRIGHTNESS;
+static int fadeStepsLeft = 0;
+static unsigned long lastFadeStepTime = 0;
+
+// Мигание OVERLOAD — собственный таймер, не зависит от millis()/500
+static bool overloadBlinkState = false;
+static unsigned long lastOverloadBlink = 0;
 
 // ===== Инициализация дисплея =====
 void Display_Init() {
@@ -105,9 +109,14 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
 
   // --- Перегрузка: мигающий текст вместо веса ---
   if (overloaded) {
+    // Обновляем фазу мигания через собственный таймер
+    unsigned long _now = millis();
+    if (_now - lastOverloadBlink >= 500UL) {
+      overloadBlinkState = !overloadBlinkState;
+      lastOverloadBlink = _now;
+    }
     display.setTextSize(2);
-    // Мигание: показываем/скрываем каждые 500мс
-    if ((millis() / 500) % 2 == 0) {
+    if (overloadBlinkState) {
       display.setCursor(4, 0);
       display.print("OVERLOAD!");
     }
@@ -235,7 +244,7 @@ void Display_ShowMessage(const char* msg) {
   int16_t cx = (SCREEN_WIDTH - (int16_t)tw) / 2;
   int16_t cy = (SCREEN_HEIGHT - (int16_t)th) / 2;
   display.setCursor(cx > 0 ? cx : 0, cy > 0 ? cy : 0);
-  display.println(msg);
+  display.print(msg);
   display.display();
 }
 
@@ -257,8 +266,8 @@ void Display_Splash(const char* title) {
   int16_t x = (SCREEN_WIDTH - (int16_t)tw) / 2;
   int16_t y = (SCREEN_HEIGHT - (int16_t)th) / 2 - 8;
 
-  display.setCursor(x > 0 ? x : 0, y);
-  display.println(title);
+  display.setCursor(x > 0 ? x : 0, y > 0 ? y : 0);
+  display.print(title);
   display.display();
 }
 
@@ -400,9 +409,13 @@ bool Display_IsDimmed() {
 // ===== Установить яркость дисплея =====
 void Display_SetBrightness(uint8_t brightness) {
   currentNormalBrightness = brightness;
+  // Обновляем fadeBrightness всегда, чтобы следующий wake-фейд
+  // стартовал с правильного значения даже если дисплей сейчас затемнён.
   if (!displayDimmed) {
     fadeBrightness = brightness;
     display.ssd1306_command(SSD1306_SETCONTRAST);
     display.ssd1306_command(brightness);
+  } else {
+    fadeBrightness = DIM_BRIGHTNESS;
   }
 }

@@ -1,11 +1,3 @@
-// ===================================================================
-// Mini Scale — компактные весы на ESP8266 + HX711 + OLED SSD1306
-// ===================================================================
-// Основной файл прошивки. Управляет инициализацией всех модулей,
-// главным циклом опроса датчиков, обработкой кнопки, отображением
-// на дисплее, авто-затуханием, авто-выключением и сохранением данных.
-// ===================================================================
-
 #include <math.h>
 #include <ESP8266WiFi.h>
 #include "Config.h"
@@ -16,88 +8,129 @@
 #include "CalibrationMode.h"
 #include "BatteryControl.h"
 #include "SettingsMode.h"
+#include "UiText.h"
 
 extern "C" {
   #include "user_interface.h"
 }
 
-// Таймер бездействия: сбрасывается при изменении веса или нажатии кнопки.
+// Время последнего события активности (нажатие кнопки, изменение веса).
+// Используется для таймеров auto-dim и auto-off.
 unsigned long lastActivityTime = 0;
 
-// Предыдущий вес — для отслеживания значимых изменений
-static float prevWeight = 0.0;
+// Предыдущее значение веса — для определения факта изменения (обновляет lastActivityTime)
+static float prevWeight = 0.0f;
 
-// Неблокирующее отображение сообщений (TARE OK, UNDO OK и т.д.)
+// Флаг и параметры временного сообщения на дисплее (TARE OK, UNDO OK и т.п.)
 static bool showingMessage = false;
 static unsigned long messageStartTime = 0;
+static unsigned long messageDuration = SUCCESS_MSG_MS;
 static const char* messageText = nullptr;
 
-// Активные таймеры (загружаются из настроек)
+// Активные значения таймеров — загружаются из EEPROM через loadSettings()
 static unsigned long activeAutoOffMs = AUTO_OFF_MS;
 static unsigned long activeAutoDimMs = AUTO_DIM_MS;
+
+// Режим отображения единиц (false=кг, true=г)
 static bool useGrams = false;
 
-// Таблицы значений (должны совпадать с SettingsMode.cpp)
-static const unsigned long autoOffTable[] = { 60000UL, 180000UL, 300000UL, 0UL };
-static const unsigned long autoDimTable[] = { 30000UL, 60000UL, 120000UL };
+// Флаг и таймер отложенного выключения при критическом заряде батареи.
+// После установки флага устройство показывает сообщение и через 3 сек уходит в deepSleep.
+static bool lowBatteryShutdownPending = false;
+static unsigned long lowBatteryShutdownAt = 0;
 
-// ===== Загрузка настроек из EEPROM в рабочие переменные =====
+// Флаг и таймер автовыключения (auto-off).
+// Показывается сообщение AUTO_OFF_MSG_MS мс, затем deepSleep.
+// Любое нажатие кнопки в этот период отменяет выключение.
+static bool autoOffPending = false;
+static unsigned long autoOffStartedAt = 0;
+
+// Загрузить настройки из EEPROM в рабочие переменные loop().
+// Вызывается при старте и после выхода из меню настроек.
 static void loadSettings() {
-  // Auto-off
-  uint8_t offMode = constrain(savedData.auto_off_mode, 0, 3);
-  activeAutoOffMs = autoOffTable[offMode];
+  uint8_t offMode = constrain(savedData.auto_off_mode, 0, AUTO_OFF_VALUES_COUNT - 1);
+  activeAutoOffMs = autoOffValues[offMode];
 
-  // Auto-dim
-  uint8_t dimMode = constrain(savedData.auto_dim_mode, 0, 2);
-  activeAutoDimMs = autoDimTable[dimMode];
+  uint8_t dimMode = constrain(savedData.auto_dim_mode, 0, AUTO_DIM_VALUES_COUNT - 1);
+  activeAutoDimMs = autoDimValues[dimMode];
 
-  // Единицы
   useGrams = (savedData.units_mode == 1);
 
   DEBUG_PRINTF("Loaded: off=%lums, dim=%lums, grams=%d\n",
                activeAutoOffMs, activeAutoDimMs, useGrams);
 }
 
-// ===== Инициализация =====
+// Показать временное сообщение на дисплее.
+// Сообщение автоматически исчезает через durationMs миллисекунд в основном цикле.
+static void ShowTransientMessage(const char* text, unsigned long durationMs) {
+  Display_ShowMessage(text);
+  showingMessage = true;
+  messageDuration = durationMs;
+  messageStartTime = millis();
+}
+
+// -------------------------------------------------------
+// setup
+// -------------------------------------------------------
+// Порядок инициализации:
+//   1. WiFi off (снижение потребления)
+//   2. Serial, Button, Display
+//   3. Memory_Init — загрузка EEPROM (или factory reset)
+//   4. Battery_Init — первое считывание АЦП батареи
+//   5. Scale_Init — загрузка offset/cal_factor, вычисление session_delta
+//   6. ApplySettings / loadSettings — применить яркость, auto-zero, таймеры
+//   7. Smart Start — показать дельту веса если улей изменился
+//   8. Окно входа в калибровку (CAL_ENTRY_WINDOW_MS после старта)
+// -------------------------------------------------------
 void setup() {
-  // Отключение WiFi для экономии ~70 мА
+  // Отключаем WiFi — он не используется, но потребляет ток
   WiFi.mode(WIFI_OFF);
   WiFi.forceSleepBegin();
   delay(1);
 
   Serial.begin(SERIAL_BAUD);
+  delay(500);
 
-  // Инициализация кнопки и дисплея
   Button_Init();
   Display_Init();
 
-  // Экран заставки с прогресс-баром загрузки
   Display_Splash("Mini Scale");
   Display_Progress(20);
 
-  // Загрузка данных из EEPROM
   Memory_Init();
   Display_Progress(40);
 
-  // Инициализация модуля батареи
   Battery_Init();
   Display_Progress(60);
 
-  // Инициализация датчика веса HX711
+  // Запоминаем эталонный вес ДО Scale_Init, чтобы сравнить с текущим (Smart Start)
+  float smartStartRef = savedData.last_weight;
+
   Scale_Init();
   Display_Progress(100);
 
-  // Применить сохранённые настройки
   ApplySettings();
   loadSettings();
 
-  // Показать полный splash-экран с версией и батареей
   Display_SplashFull("Mini Scale", FW_VERSION_STR,
                      Battery_GetVoltage(), Battery_GetPercent());
   delay(1500);
 
-  // Проверка входа в режим калибровки:
-  // если кнопка удерживается во время заставки — запускаем калибровку
+  // ===== Smart Start =====
+  // Если вес улья изменился на >= SMART_START_MIN_DELTA кг с момента последнего выключения,
+  // показываем дельту: положительная = прибавка (мёд), отрицательная = убыль (рой/отбор)
+  if (!isnan(smartStartRef) && !isinf(smartStartRef) &&
+      fabs(smartStartRef) > 0.001f &&
+      current_weight > WEIGHT_ERROR_THRESHOLD &&
+      fabs(current_weight - smartStartRef) >= SMART_START_MIN_DELTA) {
+    char smartBuf[20];
+    snprintf(smartBuf, sizeof(smartBuf), "VES: %+.2f kg", current_weight - smartStartRef);
+    Display_ShowMessage(smartBuf);
+    delay(3000);
+  }
+
+  // ===== Окно входа в режим калибровки =====
+  // Если кнопка нажата в течение CAL_ENTRY_WINDOW_MS после старта — входим в калибровку
   unsigned long waitStart = millis();
   bool enterCal = false;
   while (millis() - waitStart < CAL_ENTRY_WINDOW_MS) {
@@ -111,95 +144,120 @@ void setup() {
     delay(10);
   }
   if (enterCal) {
-    RunCalibrationMode(); // Блокирующая функция — не возвращается
+    RunCalibrationMode(); // не возвращается — завершается через ESP.restart()
   }
 
   lastActivityTime = millis();
 }
 
-// ===== Главный цикл =====
+// -------------------------------------------------------
+// loop
+// -------------------------------------------------------
+// Структура каждой итерации:
+//   1. WDT + fade-анимация дисплея
+//   2. Ожидание завершения отложенного выключения (low battery)
+//   3. Scale_Update — новое значение веса
+//   4. Battery_Update — проверка заряда
+//   5. Button_Update — опрос кнопки, обработка действий
+//   6. Управление временным сообщением на дисплее
+//   7. Отрисовка главного экрана (пропускается если дисплей затемнён и вес стабилен)
+//   8. Memory_Save — отложенное сохранение веса в EEPROM
+//   9. Auto-dim / Auto-off
+//  10. Light sleep если вес стабилен (Scale_PowerSave) + обработка pending action
+// -------------------------------------------------------
 void loop() {
-  // Сброс сторожевого таймера ESP8266
   ESP.wdtFeed();
+  Display_FadeUpdate(); // один шаг неблокирующей анимации яркости
 
-  // Один шаг неблокирующего затухания/пробуждения
-  Display_FadeUpdate();
+  // ===== Ожидание выключения (low battery) =====
+  // После установки флага ждём до lowBatteryShutdownAt, затем deepSleep
+  if (lowBatteryShutdownPending) {
+    if ((long)(millis() - lowBatteryShutdownAt) >= 0) {
+      Display_Off();
+      ESP.deepSleep(0);
+    }
+    delay(LOOP_DELAY_MS);
+    return;
+  }
 
-  // 1. Обновление показаний веса (чтение HX711, медианный фильтр, EMA, заморозка)
+  // ===== Обновление датчиков =====
   Scale_Update();
 
-  // Сброс таймера бездействия при значимом изменении веса
+  // Обновляем lastActivityTime при изменении веса (сбрасывает таймеры dim/off)
   if (current_weight > WEIGHT_ERROR_THRESHOLD &&
       fabs(current_weight - prevWeight) > WEIGHT_CHANGE_THRESHOLD) {
     lastActivityTime = millis();
     prevWeight = current_weight;
   }
 
-  // 2. Обновление показаний батареи (внутри — троттлинг раз в 5 секунд)
   Battery_Update();
 
-  // 3. Безопасное выключение при критическом разряде
-  if (Battery_IsCritical()) {
+  // ===== Критический заряд батареи =====
+  if (!lowBatteryShutdownPending && Battery_IsCritical()) {
     Display_Wake();
-    Display_ShowMessage("LOW BATTERY!");
+    Display_ShowMessage(UiText::kLowBattery);
     Memory_ForceSave();
-    delay(3000);
-    Display_Off();
-    ESP.deepSleep(0);
+    lowBatteryShutdownPending = true;
+    lowBatteryShutdownAt = millis() + 3000UL;
+    return;
   }
 
-  // 4. Таймаут неблокирующего сообщения (TARE OK, UNDO OK и т.д.)
-  if (showingMessage) {
-    if (millis() - messageStartTime >= SUCCESS_MSG_MS) {
-      showingMessage = false;
-    } else {
-      delay(LOOP_DELAY_MS);
-      return; // Пока сообщение на экране — пропускаем остальное
-    }
-  }
-
-  // 5. Опрос кнопки (неблокирующий конечный автомат)
+  // ===== Обработка кнопки =====
   ButtonAction action = Button_Update();
 
-  // Обработка действий кнопки
-  if (action == BTN_TARE) {
-    if (Scale_Tare()) {
-      messageText = "TARE OK!";
-    } else {
-      messageText = "TARE FAILED!";
-    }
-    Display_ShowMessage(messageText);
-    showingMessage = true;
-    messageStartTime = millis();
-    lastActivityTime = millis();
-  } else if (action == BTN_UNDO) {
-    if (Scale_UndoTare()) {
-      messageText = "UNDO OK!";
-    } else {
-      messageText = "NO UNDO";
-    }
-    Display_ShowMessage(messageText);
-    showingMessage = true;
-    messageStartTime = millis();
-    lastActivityTime = millis();
-  } else if (action == BTN_DOUBLE_TAP) {
-    // Двойное нажатие — вход в меню настроек
+  if (action == BTN_MENU_ENTER) {
+    showingMessage = false;
+    autoOffPending = false;
+    Display_SmoothWake();
     RunSettingsMode();
-    // После выхода из меню — перезагрузить настройки
-    loadSettings();
+    loadSettings(); // перезагружаем таймеры и единицы после возможных изменений
     lastActivityTime = millis();
+    return;
   }
 
-  // Пробуждение дисплея при любом нажатии кнопки (плавное включение)
+  if (action == BTN_MENU_CANCEL) {
+    showingMessage = false;
+    ShowTransientMessage(UiText::kCancelled, SUCCESS_MSG_MS);
+    lastActivityTime = millis();
+    return;
+  }
+
+  // ===== Управление временным сообщением =====
+  if (showingMessage) {
+    if (millis() - messageStartTime >= messageDuration) {
+      showingMessage = false; // время вышло — возвращаемся к главному экрану
+    } else {
+      Display_CheckDim(lastActivityTime, activeAutoDimMs);
+      delay(LOOP_DELAY_MS);
+      return;
+    }
+  }
+
+  if (action == BTN_MENU_PROMPT) {
+    Display_SmoothWake();
+    ShowTransientMessage(UiText::kPressAgain, MENU_CONFIRM_WINDOW_MS);
+    lastActivityTime = millis();
+    return;
+  } else if (action == BTN_TARE) {
+    messageText = Scale_Tare() ? UiText::kTareOk : UiText::kTareFailed;
+    ShowTransientMessage(messageText, SUCCESS_MSG_MS);
+    lastActivityTime = millis();
+    return;
+  } else if (action == BTN_UNDO) {
+    messageText = Scale_UndoTare() ? UiText::kUndoOk : UiText::kNoUndo;
+    ShowTransientMessage(messageText, SUCCESS_MSG_MS);
+    lastActivityTime = millis();
+    return;
+  }
+
+  // Любое другое действие кнопки (BTN_SHOW_HINT) — разбудить дисплей
   if (action != BTN_NONE) {
     Display_SmoothWake();
   }
 
-  // 6. Отрисовка главного экрана
-  // Пропуск перерисовки когда дисплей затемнён и вес стабилен
-  if (Display_IsDimmed() && Scale_IsStable() && !Button_IsHolding()) {
-    // Дисплей тусклый и вес стабилен — нет смысла перерисовывать
-  } else {
+  // ===== Отрисовка главного экрана =====
+  // Пропускаем если дисплей затемнён и вес стабилен — экономим CPU/I2C
+  if (!(Display_IsDimmed() && Scale_IsStable() && !Button_IsHolding())) {
     bool stable = Scale_IsStable();
     bool btnHolding = Button_IsHolding();
     unsigned long btnElapsed = Button_HoldElapsed();
@@ -212,55 +270,77 @@ void loop() {
                      useGrams);
   }
 
-  // 7. Периодическое сохранение веса в EEPROM (с dirty-проверкой и троттлингом)
+  // ===== Отложенное сохранение веса в EEPROM =====
   if (current_weight > WEIGHT_ERROR_THRESHOLD) {
     savedData.last_weight = current_weight;
-    Memory_Save();
+    Memory_Save(); // троттлинг внутри — не чаще EEPROM_MIN_INTERVAL_MS
   }
 
-  // 8. Авто-затухание дисплея при бездействии
   Display_CheckDim(lastActivityTime, activeAutoDimMs);
 
-  // 9. Авто-выключение при длительном бездействии
-  if (activeAutoOffMs > 0 && millis() - lastActivityTime > activeAutoOffMs) {
+  // ===== Auto-off: начало отсчёта =====
+  if (!autoOffPending && activeAutoOffMs > 0 && millis() - lastActivityTime > activeAutoOffMs) {
     Memory_ForceSave();
     Display_Wake();
-    Display_ShowMessage("Auto Power Off...");
+    Display_ShowMessage(UiText::kAutoPowerOff);
+    autoOffPending = true;
+    autoOffStartedAt = millis();
+  }
 
-    // Цикл ожидания с опросом кнопки — можно отменить нажатием
-    unsigned long msgStart = millis();
-    bool cancelled = false;
-    while (millis() - msgStart < AUTO_OFF_MSG_MS) {
-      ESP.wdtFeed();
+  // ===== Auto-off: ожидание и возможная отмена =====
+  if (autoOffPending) {
+    // Нажатие кнопки во время сообщения отменяет выключение
+    if (digitalRead(BUTTON_PIN) == LOW) {
+      delay(DEBOUNCE_MS);
       if (digitalRead(BUTTON_PIN) == LOW) {
+        while (digitalRead(BUTTON_PIN) == LOW) { ESP.wdtFeed(); delay(10); }
         delay(DEBOUNCE_MS);
-        if (digitalRead(BUTTON_PIN) == LOW) {
-          cancelled = true;
-          break;
-        }
+        autoOffPending = false;
+        lastActivityTime = millis();
+        ShowTransientMessage(UiText::kCancelledBang, SUCCESS_MSG_MS);
+        return;
       }
-      delay(50);
     }
 
-    if (cancelled) {
-      // Отмена авто-выключения
-      lastActivityTime = millis();
-      Display_ShowMessage("Cancelled!");
-      delay(SUCCESS_MSG_MS);
-    } else {
-      // Выключение
+    if (millis() - autoOffStartedAt >= AUTO_OFF_MSG_MS) {
       Display_Off();
       ESP.deepSleep(0);
     }
+
+    delay(LOOP_DELAY_MS);
+    return;
   }
 
-  // 10. Адаптивная задержка + HX711 power management + Light Sleep
+  // ===== Light sleep если вес стабилен =====
+  // Scale_PowerSave опрашивает кнопку внутри цикла сна.
+  // Нельзя повторно вызвать Button_Update() для обработки — состояние автомата
+  // уже изменилось внутри PowerSave. Поэтому используем pendingAction.
   if (Scale_IsIdle() && !Button_IsHolding()) {
-    // В режиме ожидания: выключаем HX711, переводим CPU в light sleep
-    scale.power_down();
-    wifi_set_sleep_type(LIGHT_SLEEP_T);
-    delay(LOOP_DELAY_IDLE_MS);  // delay() в light sleep = аппаратный light sleep
-    scale.power_up();
+    Scale_PowerSave(LOOP_DELAY_IDLE_MS);
+    ButtonAction sleepAction = Scale_GetPendingAction();
+    if (sleepAction == BTN_MENU_ENTER) {
+      showingMessage = false;
+      autoOffPending = false;
+      Display_SmoothWake();
+      RunSettingsMode();
+      loadSettings();
+      lastActivityTime = millis();
+    } else if (sleepAction == BTN_TARE) {
+      messageText = Scale_Tare() ? UiText::kTareOk : UiText::kTareFailed;
+      ShowTransientMessage(messageText, SUCCESS_MSG_MS);
+      lastActivityTime = millis();
+    } else if (sleepAction == BTN_UNDO) {
+      messageText = Scale_UndoTare() ? UiText::kUndoOk : UiText::kNoUndo;
+      ShowTransientMessage(messageText, SUCCESS_MSG_MS);
+      lastActivityTime = millis();
+    } else if (sleepAction == BTN_MENU_PROMPT) {
+      Display_SmoothWake();
+      ShowTransientMessage(UiText::kPressAgain, MENU_CONFIRM_WINDOW_MS);
+      lastActivityTime = millis();
+    } else if (sleepAction == BTN_MENU_CANCEL) {
+      ShowTransientMessage(UiText::kCancelled, SUCCESS_MSG_MS);
+      lastActivityTime = millis();
+    }
   } else {
     delay(LOOP_DELAY_MS);
   }
