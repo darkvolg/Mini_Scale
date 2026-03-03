@@ -34,9 +34,9 @@ void RunCalibrationMode() {
   display.clearDisplay();
   display.setTextSize(1);
   display.setCursor(0, 20);
-  display.print("CALIBRATION MODE");
+  display.print(F("CALIBRATION MODE"));
   display.setCursor(0, 32);
-  display.print("Release button...");
+  display.print(F("Release button..."));
   display.display();
 
   while (digitalRead(BUTTON_PIN) == LOW) { ESP.wdtFeed(); delay(10); }
@@ -61,9 +61,9 @@ void RunCalibrationMode() {
       display.clearDisplay();
       display.setCursor(0, 20);
       display.setTextSize(1);
-      display.print("CAL TIMEOUT");
+      display.print(F("CAL TIMEOUT"));
       display.setCursor(0, 32);
-      display.print("Not saved.");
+      display.print(F("Not saved."));
       display.display();
       delay(CAL_SAVED_MSG_MS);
       Display_Off();
@@ -99,31 +99,31 @@ void RunCalibrationMode() {
     display.setCursor(0, 0);
     if (hx711_ok) {
       display.print(w, 2);
-      display.print(" kg");
+      display.print(F(" kg"));
     } else {
-      display.print("ERR");
+      display.print(F("ERR"));
     }
 
     // Текущий коэффициент и номер режима
     display.setTextSize(1);
     display.setCursor(0, 25);
-    display.print("F:");
+    display.print(F("F:"));
     display.print(current_factor, 1);
-    display.print(" [");
+    display.print(F(" ["));
     display.print(menu_mode + 1);
-    display.print("/");
+    display.print(F("/"));
     display.print(MENU_COUNT);
-    display.print("]");
+    display.print(F("]"));
 
     // Подсказка по текущему режиму
     display.setCursor(0, 45);
-    if      (menu_mode == 0) { display.print("Hold=Next Click=+10"); }
-    else if (menu_mode == 1) { display.print("Hold=Next Click=-10"); }
-    else if (menu_mode == 2) { display.print("Hold=Next Click=+1"); }
-    else if (menu_mode == 3) { display.print("Hold=Next Click=-1"); }
-    else if (menu_mode == 4) { display.print("Hold=Next Click=+0.1"); }
-    else if (menu_mode == 5) { display.print("Hold=Next Click=-0.1"); }
-    else if (menu_mode == 6) { display.print("Hold=Next Click=SAVE"); }
+    if      (menu_mode == 0) { display.print(F("Hold=Next Click=+10")); }
+    else if (menu_mode == 1) { display.print(F("Hold=Next Click=-10")); }
+    else if (menu_mode == 2) { display.print(F("Hold=Next Click=+1")); }
+    else if (menu_mode == 3) { display.print(F("Hold=Next Click=-1")); }
+    else if (menu_mode == 4) { display.print(F("Hold=Next Click=+0.1")); }
+    else if (menu_mode == 5) { display.print(F("Hold=Next Click=-0.1")); }
+    else if (menu_mode == 6) { display.print(F("Hold=Next Click=SAVE")); }
 
     display.display();
 
@@ -154,7 +154,9 @@ void RunCalibrationMode() {
         else if (menu_mode == 4) current_factor = roundf((current_factor + 0.1f) * 10.0f) / 10.0f;
         else if (menu_mode == 5) current_factor = roundf((current_factor - 0.1f) * 10.0f) / 10.0f;
         else if (menu_mode == 6) {
-          // Режим SAVE: записываем cal_factor в EEPROM и перезагружаемся
+          // Режим SAVE: clamp + записываем cal_factor в EEPROM и перезагружаемся
+          if (current_factor < CAL_FACTOR_MIN) current_factor = CAL_FACTOR_MIN;
+          if (current_factor > CAL_FACTOR_MAX) current_factor = CAL_FACTOR_MAX;
           savedData.cal_factor = current_factor;
           Memory_ForceSave();
 

@@ -17,6 +17,17 @@ static uint8_t fadeBrightness = NORMAL_BRIGHTNESS;
 static int fadeStepsLeft = 0;
 static unsigned long lastFadeStepTime = 0;
 
+// Последнее значение яркости, отправленное по I2C (для пропуска повторных команд)
+static uint8_t lastSentBrightness = NORMAL_BRIGHTNESS;
+
+// Отправить яркость по I2C только если она отличается от предыдущей
+static void sendBrightness(uint8_t value) {
+  if (value == lastSentBrightness) return;
+  display.ssd1306_command(SSD1306_SETCONTRAST);
+  display.ssd1306_command(value);
+  lastSentBrightness = value;
+}
+
 // Мигание OVERLOAD — собственный таймер, не зависит от millis()/500
 static bool overloadBlinkState = false;
 static unsigned long lastOverloadBlink = 0;
@@ -56,7 +67,21 @@ static void drawBatteryIcon(int x, int y, int percent, bool blink) {
   display.setTextSize(1);
   display.setCursor(x + w + 5, y + 1);
   display.print(percent);
-  display.print("%");
+  display.print(F("%"));
+}
+
+// ===== Напряжение батареи (правый нижний угол) =====
+static void drawVoltage(float voltage) {
+  display.setTextSize(1);
+  int16_t x1, y1;
+  uint16_t tw, th;
+  char vBuf[16];
+  dtostrf(voltage, 4, 2, vBuf);
+  vBuf[sizeof(vBuf) - 2] = '\0';
+  strcat(vBuf, "V");
+  display.getTextBounds(vBuf, 0, 0, &x1, &y1, &tw, &th);
+  display.setCursor(SCREEN_WIDTH - tw - 1, 51);
+  display.print(vBuf);
 }
 
 // ===== Прогресс-бар удержания кнопки =====
@@ -118,21 +143,11 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
     display.setTextSize(2);
     if (overloadBlinkState) {
       display.setCursor(4, 0);
-      display.print("OVERLOAD!");
+      display.print(F("OVERLOAD!"));
     }
     // Пропускаем отображение веса, но показываем батарею
     drawBatteryIcon(0, 50, bat_percent, batLowBlink);
-    {
-      display.setTextSize(1);
-      int16_t x1, y1;
-      uint16_t tw, th;
-      char vBuf[10];
-      dtostrf(voltage, 4, 2, vBuf);
-      strcat(vBuf, "V");
-      display.getTextBounds(vBuf, 0, 0, &x1, &y1, &tw, &th);
-      display.setCursor(SCREEN_WIDTH - tw - 1, 51);
-      display.print(vBuf);
-    }
+    drawVoltage(voltage);
     display.display();
     return;
   }
@@ -141,7 +156,7 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
   if (weight < WEIGHT_ERROR_THRESHOLD) {
     display.setTextSize(2);
     display.setCursor(0, 0);
-    display.println("ERROR");
+    display.println(F("ERROR"));
   } else {
     // Определяем отображаемый вес и единицу измерения
     float displayVal = weight;
@@ -183,7 +198,7 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
   if (frozen && trend == 0) {
     display.setTextSize(1);
     display.setCursor(SCREEN_WIDTH - 6, 0);
-    display.print("*");
+    display.print(F("*"));
   }
 
   // --- Средняя часть: подсказки при удержании кнопки или дельта сессии ---
@@ -191,26 +206,26 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
     display.setTextSize(1);
     display.setCursor(0, 22);
     if (btnElapsed > BUTTON_UNDO_MS) {
-      display.println("Release: UNDO TARE");
+      display.println(F("Release: UNDO TARE"));
     } else if (btnElapsed > BUTTON_TARE_MS) {
-      display.println("Release: TARE");
+      display.println(F("Release: TARE"));
     } else {
-      display.println("Holding...");
+      display.println(F("Holding..."));
     }
     drawHoldBar(34, btnElapsed);
   } else {
     display.setTextSize(1);
     display.setCursor(0, 25);
-    display.print("Delta: ");
+    display.print(F("Delta: "));
     if (useGrams) {
       float deltaG = delta * 1000.0f;
-      if (deltaG > 0) display.print("+");
+      if (deltaG > 0) display.print(F("+"));
       display.print(deltaG, 1);
-      display.println(" g");
+      display.println(F(" g"));
     } else {
-      if (delta > 0) display.print("+");
+      if (delta > 0) display.print(F("+"));
       display.print(delta, 2);
-      display.println(" kg");
+      display.println(F(" kg"));
     }
   }
 
@@ -218,17 +233,7 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
   drawBatteryIcon(0, 50, bat_percent, batLowBlink);
 
   // --- Напряжение батареи ---
-  {
-    display.setTextSize(1);
-    int16_t x1, y1;
-    uint16_t tw, th;
-    char vBuf[10];
-    dtostrf(voltage, 4, 2, vBuf);
-    strcat(vBuf, "V");
-    display.getTextBounds(vBuf, 0, 0, &x1, &y1, &tw, &th);
-    display.setCursor(SCREEN_WIDTH - tw - 1, 51);
-    display.print(vBuf);
-  }
+  drawVoltage(voltage);
 
   display.display();
 }
@@ -294,14 +299,7 @@ void Display_SplashFull(const char* title, const char* version,
 
   // Иконка батареи + напряжение внизу
   drawBatteryIcon(0, 50, percent, false);
-  {
-    char vBuf[10];
-    dtostrf(voltage, 4, 2, vBuf);
-    strcat(vBuf, "V");
-    display.getTextBounds(vBuf, 0, 0, &x1, &y1, &tw, &th);
-    display.setCursor(SCREEN_WIDTH - tw - 1, 51);
-    display.print(vBuf);
-  }
+  drawVoltage(voltage);
 
   display.display();
 }
@@ -355,14 +353,12 @@ void Display_FadeUpdate() {
     int step = (int)(currentNormalBrightness - DIM_BRIGHTNESS) / DIM_FADE_STEPS;
     fadeBrightness = (fadeBrightness > step + DIM_BRIGHTNESS) ?
                      (fadeBrightness - step) : DIM_BRIGHTNESS;
-    display.ssd1306_command(SSD1306_SETCONTRAST);
-    display.ssd1306_command(fadeBrightness);
+    sendBrightness(fadeBrightness);
 
     fadeStepsLeft--;
     if (fadeStepsLeft <= 0 || fadeBrightness <= DIM_BRIGHTNESS) {
       fadeBrightness = DIM_BRIGHTNESS;
-      display.ssd1306_command(SSD1306_SETCONTRAST);
-      display.ssd1306_command(DIM_BRIGHTNESS);
+      sendBrightness(DIM_BRIGHTNESS);
       displayDimmed = true;
       fadeState = FADE_IDLE;
     }
@@ -370,14 +366,12 @@ void Display_FadeUpdate() {
     int step = (int)(currentNormalBrightness - DIM_BRIGHTNESS) / WAKE_FADE_STEPS;
     fadeBrightness = (fadeBrightness + step < currentNormalBrightness) ?
                      (fadeBrightness + step) : currentNormalBrightness;
-    display.ssd1306_command(SSD1306_SETCONTRAST);
-    display.ssd1306_command(fadeBrightness);
+    sendBrightness(fadeBrightness);
 
     fadeStepsLeft--;
     if (fadeStepsLeft <= 0 || fadeBrightness >= currentNormalBrightness) {
       fadeBrightness = currentNormalBrightness;
-      display.ssd1306_command(SSD1306_SETCONTRAST);
-      display.ssd1306_command(currentNormalBrightness);
+      sendBrightness(currentNormalBrightness);
       displayDimmed = false;
       fadeState = FADE_IDLE;
     }
@@ -396,8 +390,7 @@ void Display_CheckDim(unsigned long lastActivity, unsigned long autoDimMs) {
 void Display_Wake() {
   fadeState = FADE_IDLE;
   fadeBrightness = currentNormalBrightness;
-  display.ssd1306_command(SSD1306_SETCONTRAST);
-  display.ssd1306_command(currentNormalBrightness);
+  sendBrightness(currentNormalBrightness);
   displayDimmed = false;
 }
 
@@ -413,8 +406,7 @@ void Display_SetBrightness(uint8_t brightness) {
   // стартовал с правильного значения даже если дисплей сейчас затемнён.
   if (!displayDimmed) {
     fadeBrightness = brightness;
-    display.ssd1306_command(SSD1306_SETCONTRAST);
-    display.ssd1306_command(brightness);
+    sendBrightness(brightness);
   } else {
     fadeBrightness = DIM_BRIGHTNESS;
   }

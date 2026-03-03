@@ -69,6 +69,48 @@ static void ShowTransientMessage(const char* text, unsigned long durationMs) {
   messageStartTime = millis();
 }
 
+// Обработка действия кнопки (общая для основного loop и PowerSave).
+// Возвращает true если действие обработано и нужен return из loop().
+static bool handleButtonAction(ButtonAction action) {
+  if (action == BTN_MENU_ENTER) {
+    showingMessage = false;
+    autoOffPending = false;
+    Display_SmoothWake();
+    RunSettingsMode();
+    loadSettings();
+    lastActivityTime = millis();
+    return true;
+  }
+  if (action == BTN_MENU_CANCEL) {
+    showingMessage = false;
+    ShowTransientMessage(UiText::kCancelled, SUCCESS_MSG_MS);
+    lastActivityTime = millis();
+    return true;
+  }
+  if (action == BTN_MENU_PROMPT) {
+    Display_SmoothWake();
+    // Запас: реальное окно в ButtonControl перезапускается при отпускании кнопки,
+    // а BTN_MENU_PROMPT приходит ещё во время удержания. Даём +3 сек сверх окна,
+    // чтобы сообщение гарантированно дожило до BTN_MENU_ENTER или BTN_MENU_CANCEL.
+    ShowTransientMessage(UiText::kPressAgain, MENU_CONFIRM_WINDOW_MS + MENU_HOLD_MS);
+    lastActivityTime = millis();
+    return true;
+  }
+  if (action == BTN_TARE) {
+    const char* msg = Scale_Tare() ? UiText::kTareOk : UiText::kTareFailed;
+    ShowTransientMessage(msg, SUCCESS_MSG_MS);
+    lastActivityTime = millis();
+    return true;
+  }
+  if (action == BTN_UNDO) {
+    const char* msg = Scale_UndoTare() ? UiText::kUndoOk : UiText::kNoUndo;
+    ShowTransientMessage(msg, SUCCESS_MSG_MS);
+    lastActivityTime = millis();
+    return true;
+  }
+  return false;
+}
+
 // -------------------------------------------------------
 // setup
 // -------------------------------------------------------
@@ -180,6 +222,24 @@ void loop() {
     return;
   }
 
+  // ===== Обработка кнопки (до Scale_Update — HX711 блокирует на сотни мс) =====
+  ButtonAction action = Button_Update();
+
+  if (handleButtonAction(action)) return;
+
+  // ===== Управление временным сообщением =====
+  // ВАЖНО: этот блок ДО Scale_Update(), чтобы при показе "Press again"
+  // не блокироваться на HX711 (~300 мс) — иначе короткие нажатия теряются.
+  if (showingMessage) {
+    if (millis() - messageStartTime >= messageDuration) {
+      showingMessage = false; // время вышло — возвращаемся к главному экрану
+    } else {
+      Display_CheckDim(lastActivityTime, activeAutoDimMs);
+      delay(LOOP_DELAY_MS);
+      return;
+    }
+  }
+
   // ===== Обновление датчиков =====
   Scale_Update();
 
@@ -199,54 +259,6 @@ void loop() {
     Memory_ForceSave();
     lowBatteryShutdownPending = true;
     lowBatteryShutdownAt = millis() + 3000UL;
-    return;
-  }
-
-  // ===== Обработка кнопки =====
-  ButtonAction action = Button_Update();
-
-  if (action == BTN_MENU_ENTER) {
-    showingMessage = false;
-    autoOffPending = false;
-    Display_SmoothWake();
-    RunSettingsMode();
-    loadSettings(); // перезагружаем таймеры и единицы после возможных изменений
-    lastActivityTime = millis();
-    return;
-  }
-
-  if (action == BTN_MENU_CANCEL) {
-    showingMessage = false;
-    ShowTransientMessage(UiText::kCancelled, SUCCESS_MSG_MS);
-    lastActivityTime = millis();
-    return;
-  }
-
-  // ===== Управление временным сообщением =====
-  if (showingMessage) {
-    if (millis() - messageStartTime >= messageDuration) {
-      showingMessage = false; // время вышло — возвращаемся к главному экрану
-    } else {
-      Display_CheckDim(lastActivityTime, activeAutoDimMs);
-      delay(LOOP_DELAY_MS);
-      return;
-    }
-  }
-
-  if (action == BTN_MENU_PROMPT) {
-    Display_SmoothWake();
-    ShowTransientMessage(UiText::kPressAgain, MENU_CONFIRM_WINDOW_MS);
-    lastActivityTime = millis();
-    return;
-  } else if (action == BTN_TARE) {
-    messageText = Scale_Tare() ? UiText::kTareOk : UiText::kTareFailed;
-    ShowTransientMessage(messageText, SUCCESS_MSG_MS);
-    lastActivityTime = millis();
-    return;
-  } else if (action == BTN_UNDO) {
-    messageText = Scale_UndoTare() ? UiText::kUndoOk : UiText::kNoUndo;
-    ShowTransientMessage(messageText, SUCCESS_MSG_MS);
-    lastActivityTime = millis();
     return;
   }
 
@@ -318,29 +330,7 @@ void loop() {
   if (Scale_IsIdle() && !Button_IsHolding()) {
     Scale_PowerSave(LOOP_DELAY_IDLE_MS);
     ButtonAction sleepAction = Scale_GetPendingAction();
-    if (sleepAction == BTN_MENU_ENTER) {
-      showingMessage = false;
-      autoOffPending = false;
-      Display_SmoothWake();
-      RunSettingsMode();
-      loadSettings();
-      lastActivityTime = millis();
-    } else if (sleepAction == BTN_TARE) {
-      messageText = Scale_Tare() ? UiText::kTareOk : UiText::kTareFailed;
-      ShowTransientMessage(messageText, SUCCESS_MSG_MS);
-      lastActivityTime = millis();
-    } else if (sleepAction == BTN_UNDO) {
-      messageText = Scale_UndoTare() ? UiText::kUndoOk : UiText::kNoUndo;
-      ShowTransientMessage(messageText, SUCCESS_MSG_MS);
-      lastActivityTime = millis();
-    } else if (sleepAction == BTN_MENU_PROMPT) {
-      Display_SmoothWake();
-      ShowTransientMessage(UiText::kPressAgain, MENU_CONFIRM_WINDOW_MS);
-      lastActivityTime = millis();
-    } else if (sleepAction == BTN_MENU_CANCEL) {
-      ShowTransientMessage(UiText::kCancelled, SUCCESS_MSG_MS);
-      lastActivityTime = millis();
-    }
+    handleButtonAction(sleepAction);
   } else {
     delay(LOOP_DELAY_MS);
   }

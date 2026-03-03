@@ -59,11 +59,11 @@ static void drawSettingsScreen(int menuIdx, int valueIdx, bool isSaveExit) {
   // Заголовок
   display.setTextSize(1);
   display.setCursor(0, 0);
-  display.print("SETTINGS [");
+  display.print(F("SETTINGS ["));
   display.print(menuIdx + 1);
-  display.print("/");
+  display.print(F("/"));
   display.print(SETTINGS_COUNT);
-  display.print("]");
+  display.print(F("]"));
 
   // Горизонтальная линия
   display.drawFastHLine(0, 10, SCREEN_WIDTH, WHITE);
@@ -89,9 +89,9 @@ static void drawSettingsScreen(int menuIdx, int valueIdx, bool isSaveExit) {
   display.setTextSize(1);
   display.setCursor(0, 54);
   if (isSaveExit) {
-    display.print("Click=Change Hold=SAVE");
+    display.print(F("Click=Change Hold=SAVE"));
   } else {
-    display.print("Click=Change Hold=Next");
+    display.print(F("Click=Change Hold=Next"));
   }
 
   display.display();

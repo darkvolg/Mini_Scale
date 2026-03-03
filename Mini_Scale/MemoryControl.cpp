@@ -16,10 +16,10 @@ static uint8_t currentSeq = 0;
 // Флаг «данные изменены» — установить через Memory_MarkDirty(), сбрасывается при записи
 static bool isDirty = false;
 
-// Вычисление CRC16 (CRC-CCITT, полином 0x1021) для всех байт структуры кроме поля crc16
-static uint16_t calcCRC16(const EEPROM_Data* data) {
+// Вычисление CRC16 (CRC-CCITT, полином 0x1021) для произвольного блока байт.
+// Используется для всех версий EEPROM структуры.
+static uint16_t calcCRC16_raw(const void* data, size_t len) {
   const uint8_t* ptr = (const uint8_t*)data;
-  size_t len = offsetof(EEPROM_Data, crc16);
   uint16_t crc = 0xFFFF;
   for (size_t i = 0; i < len; i++) {
     crc ^= ((uint16_t)ptr[i]) << 8;
@@ -32,6 +32,10 @@ static uint16_t calcCRC16(const EEPROM_Data* data) {
     }
   }
   return crc;
+}
+
+static uint16_t calcCRC16(const EEPROM_Data* data) {
+  return calcCRC16_raw(data, offsetof(EEPROM_Data, crc16));
 }
 
 // Адрес слота в EEPROM (слоты расположены последовательно)
@@ -111,20 +115,7 @@ struct EEPROM_Data_V3 {
 };
 
 static uint16_t calcCRC16_V2(const EEPROM_Data_V2* data) {
-  const uint8_t* ptr = (const uint8_t*)data;
-  size_t len = offsetof(EEPROM_Data_V2, crc16);
-  uint16_t crc = 0xFFFF;
-  for (size_t i = 0; i < len; i++) {
-    crc ^= ((uint16_t)ptr[i]) << 8;
-    for (uint8_t bit = 0; bit < 8; bit++) {
-      if (crc & 0x8000) {
-        crc = (crc << 1) ^ 0x1021;
-      } else {
-        crc = crc << 1;
-      }
-    }
-  }
-  return crc;
+  return calcCRC16_raw(data, offsetof(EEPROM_Data_V2, crc16));
 }
 
 static bool isSlotValidV2(const EEPROM_Data_V2* data) {
@@ -138,17 +129,7 @@ static bool isSlotValidV2(const EEPROM_Data_V2* data) {
 }
 
 static uint16_t calcCRC16_V3(const EEPROM_Data_V3* data) {
-  const uint8_t* ptr = (const uint8_t*)data;
-  size_t len = offsetof(EEPROM_Data_V3, crc16);
-  uint16_t crc = 0xFFFF;
-  for (size_t i = 0; i < len; i++) {
-    crc ^= ((uint16_t)ptr[i]) << 8;
-    for (uint8_t bit = 0; bit < 8; bit++) {
-      if (crc & 0x8000) crc = (crc << 1) ^ 0x1021;
-      else              crc = crc << 1;
-    }
-  }
-  return crc;
+  return calcCRC16_raw(data, offsetof(EEPROM_Data_V3, crc16));
 }
 
 static bool isSlotValidV3(const EEPROM_Data_V3* data) {

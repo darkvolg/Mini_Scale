@@ -18,11 +18,11 @@ static uint8_t  weightHistoryIdx  = 0;
 static bool     weightHistoryFull = false;
 
 // ===== EMA-фильтр веса =====
-static float filteredWeight    = 0.0;
+static float filteredWeight    = 0.0f;
 static bool  filterInitialized = false;
 
 // ===== Заморозка показаний на дисплее =====
-static float frozenWeight = 0.0;
+static float frozenWeight = 0.0f;
 static bool  isFrozen     = false;
 
 // ===== Счётчик ошибок HX711 =====
@@ -44,6 +44,9 @@ static ButtonAction pendingAction = BTN_NONE;
 // ===== Перегрузка =====
 static bool isOverloaded = false;
 
+// ===== Кэш стабильности (пересчитывается при добавлении в буфер) =====
+static bool cachedStable = false;
+
 // ===== Тренд веса =====
 static float  prevTrendWeight = 0.0f;
 static int8_t weightTrend     = 0;
@@ -52,11 +55,21 @@ static int8_t weightTrend     = 0;
 // Вспомогательные функции
 // -------------------------------------------------------
 
-// Добавить новое значение в кольцевой буфер стабильности
+// Добавить новое значение в кольцевой буфер стабильности и пересчитать кэш
 static void stabilityPush(float w) {
   weightHistory[weightHistoryIdx] = w;
   weightHistoryIdx = (weightHistoryIdx + 1) % STABILITY_WINDOW;
   if (!weightHistoryFull && weightHistoryIdx == 0) weightHistoryFull = true;
+
+  // Пересчёт cachedStable — O(STABILITY_WINDOW), но только 1 раз за loop
+  uint8_t count = weightHistoryFull ? STABILITY_WINDOW : weightHistoryIdx;
+  if (count < 2) { cachedStable = false; return; }
+  float minVal = weightHistory[0], maxVal = weightHistory[0];
+  for (uint8_t i = 1; i < count; i++) {
+    if (weightHistory[i] < minVal) minVal = weightHistory[i];
+    if (weightHistory[i] > maxVal) maxVal = weightHistory[i];
+  }
+  cachedStable = (maxVal - minVal) < STABILITY_THRESHOLD;
 }
 
 // Округление до 2 знаков после запятой (для отображения на дисплее)
@@ -70,6 +83,21 @@ static float medianOfThree(float a, float b, float c) {
   if (b > c) { float t = b; b = c; c = t; }
   if (a > b) { float t = a; a = b; b = t; }
   return b;
+}
+
+// Сброс всех внутренних буферов и фильтров (после tare/undo/error recovery)
+static void resetBuffers() {
+  isFrozen          = false;
+  weightHistoryIdx  = 0;
+  weightHistoryFull = false;
+  cachedStable      = false;
+  memset(weightHistory, 0, sizeof(weightHistory));
+  errorCount        = 0;
+  medianCount       = 0;
+  medianIdx         = 0;
+  autoZeroStableCount = 0;
+  prevTrendWeight   = 0.0f;
+  weightTrend       = 0;
 }
 
 // -------------------------------------------------------
@@ -259,20 +287,11 @@ bool Scale_Tare() {
   savedData.last_weight = 0.0f;
   Memory_ForceSave();
 
-  undoAvailable     = true;
-  current_weight    = 0.0f;
-  filteredWeight    = 0.0f;
-  isFrozen          = false;
-  display_weight    = 0.0f;
-  weightHistoryIdx  = 0;
-  weightHistoryFull = false;
-  memset(weightHistory, 0, sizeof(weightHistory));
-  errorCount        = 0;
-  medianCount       = 0;
-  medianIdx         = 0;
-  autoZeroStableCount = 0;
-  prevTrendWeight   = 0.0f;
-  weightTrend       = 0;
+  undoAvailable  = true;
+  current_weight = 0.0f;
+  filteredWeight = 0.0f;
+  display_weight = 0.0f;
+  resetBuffers();
   return true;
 }
 
@@ -306,16 +325,8 @@ bool Scale_UndoTare() {
   }
   Memory_ForceSave();
 
-  undoAvailable     = false;
-  isFrozen          = false;
-  weightHistoryIdx  = 0;
-  weightHistoryFull = false;
-  memset(weightHistory, 0, sizeof(weightHistory));
-  errorCount        = 0;
-  medianCount       = 0;
-  medianIdx         = 0;
-  autoZeroStableCount = 0;
-  weightTrend       = 0;
+  undoAvailable = false;
+  resetBuffers();
   return true;
 }
 
@@ -323,15 +334,7 @@ bool Scale_UndoTare() {
 // Вспомогательные геттеры
 // -------------------------------------------------------
 bool Scale_IsStable() {
-  uint8_t count = weightHistoryFull ? STABILITY_WINDOW : weightHistoryIdx;
-  if (count < 2) return false;
-  float minVal = weightHistory[0];
-  float maxVal = weightHistory[0];
-  for (uint8_t i = 1; i < count; i++) {
-    if (weightHistory[i] < minVal) minVal = weightHistory[i];
-    if (weightHistory[i] > maxVal) maxVal = weightHistory[i];
-  }
-  return (maxVal - minVal) < STABILITY_THRESHOLD;
+  return cachedStable;
 }
 
 bool Scale_IsIdle()      { return Scale_IsStable() && (errorCount == 0); }
