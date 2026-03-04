@@ -42,7 +42,7 @@
 // ===================== Version =====================
 #define FIRMWARE_VERSION          4
 #define PREVIOUS_FIRMWARE_VERSION 3
-#define FW_VERSION_STR            "v1.6.0"
+#define FW_VERSION_STR            "v1.6.1"
 
 // ===================== Defaults =====================
 #define DEFAULT_CALIBRATION 2280.0f
