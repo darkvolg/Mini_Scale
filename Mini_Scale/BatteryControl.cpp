@@ -167,12 +167,12 @@ bool Battery_IsLow() { return bat_percent < BAT_LOW_PERCENT; }
 // BAT_CRITICAL_PERCENT = 5% — при этом устройство начинает процедуру выключения.
 //
 // Дополнительные защитные условия:
-//   1. millis() < graceUntil — охранный период 10 сек после старта (не выключаем при запуске)
+//   1. (long)(millis()-graceUntil)<0 — охранный период 10 сек после старта, wrap-around safe
 //   2. smoothed_bat_raw < BAT_MIN_ADC_CONNECTED — батарея не подключена совсем
 //      (ADC читает 0 или около 0 — это не разряженная батарея, а отсутствующая)
 bool Battery_IsCritical() {
-  // Охранный период после старта: корректная проверка переполнения millis()
-  if (millis() < graceUntil) return false;
+  // Охранный период после старта: корректная проверка с учётом wrap-around millis() (~49 дней)
+  if ((long)(millis() - graceUntil) < 0) return false;
   // Защита от ложного срабатывания при отсутствии батареи (ADC = 0)
   if (smoothed_bat_raw < BAT_MIN_ADC_CONNECTED) return false;
   return (bat_percent <= BAT_CRITICAL_PERCENT);
