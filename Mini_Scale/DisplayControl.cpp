@@ -48,6 +48,64 @@ static unsigned long lastFadeStepTime = 0;
 // каждая команда SSD1306 занимает ~100 мкс на шине I2C.
 static uint8_t lastSentBrightness = NORMAL_BRIGHTNESS;
 
+// ================================================================
+// I2C diff-рендеринг: отправляем только изменённые страницы буфера
+// ================================================================
+// SSD1306: буфер 1024 байт = 8 страниц × 128 байт.
+// При стабильном весе обычно меняется 1-2 страницы из 8.
+// Экономия при частичном обновлении:
+//   2 страницы из 8 → ~75% меньше I2C трафика (~3.75 мс вместо ~5 мс на @400кГц).
+// Ограничение: diff работает только в Display_ShowMain (hot path).
+// Остальные функции (ShowMessage, Splash, ...) используют display.display() напрямую
+// и инвалидируют тень через Display_Invalidate().
+static uint8_t shadowBuffer[SCREEN_WIDTH * (SCREEN_HEIGHT / 8)];  // 128 × 8 = 1024 байт
+static bool    shadowValid = false;
+
+// Отправить одну страницу (128 байт) дисплея по I2C.
+// Использует horizontal addressing mode с ограниченным диапазоном страниц.
+// Данные отправляются порциями по 32 байт — безопасно для Wire буфера ESP8266.
+static void sendPage(uint8_t page, const uint8_t* data) {
+  // Устанавливаем адресное окно: полная ширина, одна страница
+  display.ssd1306_command(SSD1306_COLUMNADDR);
+  display.ssd1306_command(0);
+  display.ssd1306_command(SCREEN_WIDTH - 1);
+  display.ssd1306_command(SSD1306_PAGEADDR);
+  display.ssd1306_command(page);
+  display.ssd1306_command(page);
+
+  // 128 байт данных порциями по 32 байт (Wire буфер 128Б - адрес - 0x40 = ~126Б, 32 — запас)
+  for (uint8_t col = 0; col < SCREEN_WIDTH; col += 32) {
+    Wire.beginTransmission(OLED_I2C_ADDR);
+    Wire.write((uint8_t)0x40);  // поток данных (Co=0, D/C#=1)
+    for (uint8_t i = 0; i < 32; i++) {
+      Wire.write(data[col + i]);
+    }
+    Wire.endTransmission();
+  }
+}
+
+// Отправить только изменённые страницы буфера на экран.
+// При первом вызове или после инвалидации — полный display.display().
+// В остальных случаях — postranichno сравниваем с тенью и шлём только дельту.
+static void displayDiff() {
+  uint8_t* buf = display.getBuffer();
+  if (!buf || !shadowValid) {
+    display.display();  // первый или форс-кадр: полная передача
+    if (buf) {
+      memcpy(shadowBuffer, buf, sizeof(shadowBuffer));
+      shadowValid = true;
+    }
+    return;
+  }
+
+  for (uint8_t page = 0; page < (SCREEN_HEIGHT / 8); page++) {
+    uint16_t off = (uint16_t)page * SCREEN_WIDTH;
+    if (memcmp(buf + off, shadowBuffer + off, SCREEN_WIDTH) == 0) continue;  // страница не изменилась
+    sendPage(page, buf + off);
+    memcpy(shadowBuffer + off, buf + off, SCREEN_WIDTH);
+  }
+}
+
 // Отправить команду установки яркости SSD1306 по I2C.
 // Пропускает команду если значение не изменилось — экономит время шины I2C.
 // SSD1306_SETCONTRAST (0x81) + value устанавливает контраст/яркость экрана.
@@ -377,7 +435,7 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
   // --- Напряжение батареи (правый нижний угол) ---
   drawVoltage(voltage);
 
-  display.display();  // передаём буфер на экран по I2C (~5 мс)
+  displayDiff();  // отправляем только изменённые страницы (~1-4 мс вместо ~5 мс при частичном изменении)
 }
 
 // ===== Показать сообщение на весь экран =====
@@ -414,6 +472,7 @@ void Display_ShowMessage(const char* msg) {
 // которые рисуют на дисплее поверх главного экрана.
 void Display_Invalidate() {
   frameInvalidated = true;
+  shadowValid = false;  // следующий ShowMain отправит полный кадр (тень устарела)
 }
 
 // ===== Выключение дисплея =====
