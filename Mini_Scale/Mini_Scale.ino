@@ -136,6 +136,7 @@ static bool handleButtonAction(ButtonAction action) {
     RunSettingsMode();             // блокирующий вызов — возврат после выхода из меню
     loadSettings();                // перезагружаем таймеры и единицы (могли измениться)
     lastActivityTime = millis();   // сбрасываем таймер бездействия
+    Display_Invalidate();          // главный экран должен перерисоваться после меню настроек
     return true;
   }
   if (action == BTN_MENU_CANCEL) {

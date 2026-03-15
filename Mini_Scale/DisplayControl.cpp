@@ -64,6 +64,15 @@ static bool overloadBlinkState = false;
 // Момент последнего переключения фазы мигания OVERLOAD (мс)
 static unsigned long lastOverloadBlink = 0;
 
+// ================================================================
+// Frame-skip: пропуск идентичных кадров Display_ShowMain
+// ================================================================
+// Если все входные параметры совпадают с предыдущим вызовом —
+// пропускаем перерисовку и I2C передачу (~5 мс на 1024 байт @ 400 кГц).
+// Основной выигрыш: стабильный вес + нормальная батарея (между 5-секундными чтениями ADC).
+// При OVERLOAD frame-skip отключён — мигание обновляется внутри функции.
+static bool frameInvalidated = true;  // true = принудительная перерисовка следующего кадра
+
 // ===== Инициализация дисплея =====
 // Запускает SSD1306 по I2C на адресе OLED_I2C_ADDR (0x3C).
 // При ошибке инициализации: мигает встроенным светодиодом 5 раз и уходит в deepSleep.
@@ -221,6 +230,31 @@ void Display_ShowMain(float weight, float delta, float voltage, int bat_percent,
                       bool batLowBlink, bool frozen,
                       bool overloaded, int8_t trend,
                       bool useGrams) {
+  // --- Frame-skip: пропуск идентичного кадра ---
+  // Сравниваем все входные параметры с предыдущим вызовом.
+  // При OVERLOAD всегда перерисовываем (мигание обновляется внутри функции).
+  static float prevW = -999.0f, prevD = -999.0f, prevV = -1.0f;
+  static int prevBP = -1;
+  static bool prevS = false, prevH = false, prevBl = false;
+  static bool prevFr = false, prevOv = false, prevG = false;
+  static unsigned long prevEl = 0;
+  static int8_t prevTr = -2;
+
+  if (!frameInvalidated && !overloaded &&
+      weight == prevW && delta == prevD && voltage == prevV &&
+      bat_percent == prevBP && stable == prevS &&
+      btnHolding == prevH && btnElapsed == prevEl &&
+      batLowBlink == prevBl && frozen == prevFr &&
+      overloaded == prevOv && trend == prevTr &&
+      useGrams == prevG) {
+    return;  // идентичный кадр — пропускаем I2C передачу (~5 мс экономии)
+  }
+  frameInvalidated = false;
+  prevW = weight; prevD = delta; prevV = voltage; prevBP = bat_percent;
+  prevS = stable; prevH = btnHolding; prevEl = btnElapsed;
+  prevBl = batLowBlink; prevFr = frozen; prevOv = overloaded;
+  prevTr = trend; prevG = useGrams;
+
   display.clearDisplay();
 
   // --- Перегрузка: мигающий текст вместо веса ---
@@ -367,6 +401,19 @@ void Display_ShowMessage(const char* msg) {
   display.setCursor(cx > 0 ? cx : 0, cy > 0 ? cy : 0);
   display.print(msg);
   display.display();
+
+  // Инвалидируем кэш frame-skip: следующий вызов Display_ShowMain
+  // должен перерисовать главный экран поверх этого сообщения.
+  frameInvalidated = true;
+}
+
+// ===== Принудительная инвалидация кадра =====
+// Заставляет следующий вызов Display_ShowMain выполнить полную перерисовку,
+// даже если входные параметры не изменились.
+// Вызывается после RunSettingsMode, RunCalibrationMode и других функций,
+// которые рисуют на дисплее поверх главного экрана.
+void Display_Invalidate() {
+  frameInvalidated = true;
 }
 
 // ===== Выключение дисплея =====

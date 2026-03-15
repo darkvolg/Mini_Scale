@@ -1,6 +1,7 @@
 #include "ButtonControl.h"
 #include <Arduino.h>
 #include "CoreLogic.h"
+#include "BatteryControl.h"
 
 // ================================================================
 // Конечный автомат (FSM) кнопки
@@ -237,6 +238,40 @@ unsigned long Button_HoldElapsed() {
     return millis() - btnPressTime;
   }
   return 0;
+}
+
+// ===== Блокирующее ожидание отпускания кнопки =====
+// Используется в CalibrationMode и SettingsMode для ожидания отпускания
+// после входа в режим (кнопка была нажата для входа).
+// Вызывает Battery_Update() для мониторинга заряда во время ожидания.
+bool Button_WaitRelease(unsigned long timeoutMs) {
+  unsigned long start = millis();
+  while (digitalRead(BUTTON_PIN) == LOW) {
+    ESP.wdtFeed();
+    Battery_Update();
+    if (Battery_IsCritical()) return false;
+    if (millis() - start > timeoutMs) return false;
+    delay(10);
+  }
+  delay(DEBOUNCE_MS);
+  return true;
+}
+
+// ===== Измерение длительности удержания кнопки =====
+// Используется в CalibrationMode и SettingsMode для определения
+// короткого (< CAL_LONG_PRESS_MS) или длинного нажатия.
+// Предполагает что нажатие уже подтверждено (прошёл антидребезг).
+unsigned long Button_MeasureHold(unsigned long timeoutMs) {
+  unsigned long pressTime = millis();
+  while (digitalRead(BUTTON_PIN) == LOW) {
+    ESP.wdtFeed();
+    Battery_Update();
+    if (Battery_IsCritical()) break;
+    if (millis() - pressTime > timeoutMs) break;
+    delay(10);
+  }
+  delay(DEBOUNCE_MS);
+  return millis() - pressTime;
 }
 
 

@@ -129,8 +129,11 @@ void Battery_Update() {
       blinkState = !blinkState;         // переключаем фазу мигания
       lastBlinkToggle = now;
     }
+  } else {
+    // FIX-BUG2: сбрасываем фазу мигания при восстановлении заряда,
+    // чтобы при повторном разряде мигание начиналось с видимой фазы (иконка показана)
+    blinkState = false;
   }
-  // Если заряд нормальный — blinkState не трогаем (Display_BlinkPhase вернёт false)
 
   // Задача 2: считывание АЦП (с троттлингом — не чаще 1 раза в 5 секунд)
   if (now - lastBatRead < BAT_READ_INTERVAL_MS) {

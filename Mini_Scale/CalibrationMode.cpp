@@ -4,6 +4,7 @@
 #include "ScaleControl.h"
 #include "DisplayControl.h"
 #include "BatteryControl.h"
+#include "ButtonControl.h"
 #include "CoreLogic.h"
 #include "UiText.h"
 #include <Arduino.h>
@@ -48,14 +49,7 @@ void RunCalibrationMode() {
   display.print(F("Release button..."));
   display.display();
 
-  unsigned long releaseStart = millis();
-  while (digitalRead(BUTTON_PIN) == LOW) {
-    ESP.wdtFeed();
-    // Защита от залипшей кнопки: максимум 30 секунд ожидания
-    if (millis() - releaseStart > 30000UL) break;
-    delay(10);
-  }
-  delay(DEBOUNCE_MS);  // антидребезг после отпускания
+  Button_WaitRelease();  // ожидание отпускания + антидребезг + WDT + мониторинг батареи
 
   // ===== Инициализация рабочих переменных =====
   int menu_mode = 0;         // текущий активный режим [0..MENU_COUNT-1]
@@ -159,23 +153,9 @@ void RunCalibrationMode() {
       delay(DEBOUNCE_MS);
       if (digitalRead(BUTTON_PIN) != LOW) continue;  // дребезг — игнорируем
 
-      // Фиксируем момент подтверждённого нажатия
-      unsigned long pressTime = millis();
-      unsigned long pressWaitStart = millis();
-      // Ждём отпускания кнопки
-      while (digitalRead(BUTTON_PIN) == LOW) {
-        ESP.wdtFeed();
-        // Защита от залипшей кнопки: максимум 30 секунд удержания
-        if (millis() - pressWaitStart > 30000UL) break;
-        delay(10);
-      }
-      delay(DEBOUNCE_MS);  // антидребезг после отпускания
-
-      // FIX-2: один вызов millis() для lastActionTime и duration —
-      // исключаем рассинхронизацию между двумя вызовами millis().
-      unsigned long releaseTime = millis();
-      lastActionTime = releaseTime;             // сбрасываем таймер бездействия
-      unsigned long duration = releaseTime - pressTime;  // длительность удержания
+      // Измеряем длительность удержания (включает антидребезг, WDT, мониторинг батареи)
+      unsigned long duration = Button_MeasureHold();
+      lastActionTime = millis();  // сбрасываем таймер бездействия
 
       if (duration > CAL_LONG_PRESS_MS) {
         // Длинное нажатие (>= 800 мс) — переход к следующему режиму с wrap-around.

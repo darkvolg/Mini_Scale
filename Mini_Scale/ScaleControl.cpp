@@ -1,9 +1,6 @@
 #include "ScaleControl.h"
 #include "ButtonControl.h"
 #include <math.h>
-extern "C" {
-  #include "user_interface.h"  // ESP8266 SDK: wifi_set_sleep_type
-}
 
 // ================================================================
 // Глобальные переменные — доступны из других модулей (объявлены extern в ScaleControl.h)
@@ -497,6 +494,10 @@ bool Scale_UndoTare() {
     filteredWeight = w;
     display_weight = roundWeight(w);
     prevTrendWeight = w;
+  } else {
+    // FIX-BUG1: при NaN/Inf сбрасываем EMA-фильтр, чтобы следующий Scale_Update()
+    // инициализировал его реальным значением, а не сходился от stale 0.0
+    filterInitialized = false;
   }
   Memory_ForceSave();
 
@@ -568,7 +569,9 @@ void Scale_SetTaraLock(bool on) {
 // для обработки в loop() после возврата из PowerSave.
 void Scale_PowerSave(unsigned long ms) {
   scale.power_down();                    // отключаем HX711 для снижения потребления
-  wifi_set_sleep_type(LIGHT_SLEEP_T);    // ESP8266 light sleep (CPU тактируется медленнее)
+  // Примечание: WiFi уже отключён в setup() (WiFi.mode(WIFI_OFF) + forceSleepBegin),
+  // поэтому ESP8266 уже в режиме modem sleep. Дополнительный light sleep
+  // через wifi_set_sleep_type не эффективен при WIFI_OFF.
   // Сбрасываем счётчик авто-нуля: первые чтения после power_up нестабильны
   autoZeroStableCount = 0;
 
@@ -593,6 +596,8 @@ void Scale_PowerSave(unsigned long ms) {
   }
 
   scale.power_up();             // включаем HX711 обратно
+  delay(50);                    // FIX-BUG3: минимальная стабилизация HX711 после power_up
+                                // (полная стабилизация ~400 мс, но EMA сгладит остаточный шум)
   filterInitialized = false;    // первое чтение после power_up нестабильно — переинициализируем EMA
 }
 

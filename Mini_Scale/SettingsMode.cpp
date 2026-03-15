@@ -4,6 +4,7 @@
 #include "DisplayControl.h"
 #include "ScaleControl.h"
 #include "BatteryControl.h"
+#include "ButtonControl.h"
 #include <Arduino.h>
 #include "UiText.h"
 #include "CoreLogic.h"
@@ -179,15 +180,11 @@ void RunSettingsMode() {
   int menuIdx = 0;  // начинаем с первого параметра (Brightness)
 
   // Ждём отпускания кнопки — она была нажата для входа в меню
-  unsigned long releaseStart = millis();
-  while (digitalRead(BUTTON_PIN) == LOW) {
-    ESP.wdtFeed();
-    Battery_Update();
-    if (Battery_IsCritical()) return;  // аварийный выход при разряде
-    if (millis() - releaseStart > 30000UL) break;  // защита от залипшей кнопки
-    delay(10);
+  // Button_WaitRelease: антидребезг + WDT + мониторинг батареи + защита от залипания 30с
+  if (!Button_WaitRelease()) {
+    // Таймаут или критический заряд — аварийный выход
+    if (Battery_IsCritical()) return;
   }
-  delay(DEBOUNCE_MS);
 
   // ===== Главный цикл меню =====
   while (true) {
@@ -223,18 +220,9 @@ void RunSettingsMode() {
     delay(DEBOUNCE_MS);
     if (digitalRead(BUTTON_PIN) != LOW) continue;  // дребезг — ждём следующей итерации
 
-    // Измеряем длительность нажатия
-    unsigned long pressTime = millis();
-    unsigned long loopStart = millis();
-    while (digitalRead(BUTTON_PIN) == LOW) {
-      ESP.wdtFeed();
-      Battery_Update();
-      if (Battery_IsCritical()) return;  // аварийный выход при разряде во время удержания
-      if (millis() - loopStart > 30000UL) break;  // защита от залипшей кнопки
-      delay(10);
-    }
-    delay(DEBOUNCE_MS);
-    unsigned long duration = millis() - pressTime;
+    // Измеряем длительность нажатия (антидребезг + WDT + мониторинг батареи + таймаут 30с)
+    unsigned long duration = Button_MeasureHold();
+    if (Battery_IsCritical()) return;  // аварийный выход при разряде во время удержания
 
     if (duration > CAL_LONG_PRESS_MS) {
       // === Длинное нажатие >=800 мс ===
