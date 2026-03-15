@@ -18,8 +18,33 @@ build/
 # Session logs and temporary notes
 SESSION_*.md
 SESSION_CHANGES.md
+
+# AI assistant context files
 QWEN.md
+CLAUDE_PROMPT.md
+RECOMMENDATIONS.md
+
+# Generated HTML documentation
+*.html
 
 # System files
 .DS_Store
 Thumbs.db
+
+# Backups and releases
+*.bak
+*.backup
+*_backup_*/
+releases/
+*.zip
+*.7z
+*.rar
+
+# PlatformIO
+.pioenvs/
+.piolibdeps/
+platformio.ini
+
+# Doxygen
+html/
+latex/

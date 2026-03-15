@@ -9,28 +9,37 @@
 #include <Arduino.h>
 #include <math.h>
 
-// -------------------------------------------------------
+// ================================================================
 // RunCalibrationMode
-// -------------------------------------------------------
+// ================================================================
 // Блокирующий режим ручной калибровки коэффициента HX711.
+// Функция никогда не возвращает управление в loop():
+//   - При сохранении (режим SAVE) → ESP.restart()
+//   - При таймауте бездействия → ESP.restart() (без сохранения)
+//   - При критическом заряде батареи → ESP.deepSleep(0)
 //
-// Управление одной кнопкой:
-//   Короткое нажатие — изменить cal_factor на шаг текущего режима
-//   Длинное нажатие  — перейти к следующему режиму (wrap-around)
+// Управление одной кнопкой (упрощённое — без FSM кнопки):
+//   Короткое нажатие (< CAL_LONG_PRESS_MS = 800 мс) — изменить cal_factor на шаг режима
+//   Длинное нажатие  (>= CAL_LONG_PRESS_MS)         — перейти к следующему режиму (wrap-around)
 //
 // 7 режимов (menu_mode 0..6):
-//   0: +10    1: -10
-//   2: +1     3: -1
-//   4: +0.1   5: -0.1
-//   6: SAVE — сохраняет cal_factor в EEPROM и перезагружает устройство
+//   0: +10     — увеличить коэффициент на 10
+//   1: -10     — уменьшить коэффициент на 10
+//   2: +1      — увеличить на 1
+//   3: -1      — уменьшить на 1
+//   4: +0.1    — увеличить на 0.1
+//   5: -0.1    — уменьшить на 0.1
+//   6: SAVE    — сохранить и перезагрузиться
 //
-// Функция никогда не возвращает управление:
-//   - при сохранении (SAVE) → ESP.restart()
-//   - при таймауте бездействия (CAL_IDLE_TIMEOUT_MS) → ESP.restart()
-//   - при критическом заряде батареи → ESP.deepSleep(0)
-// -------------------------------------------------------
+// Вход в режим калибровки: нажать кнопку в течение CAL_ENTRY_WINDOW_MS (1 сек) после старта.
+// Калибровка: разместить на весах эталонный груз (например, 1 кг),
+// подобрать cal_factor так чтобы дисплей показывал правильное значение.
+// cal_factor = raw_ADC_units / known_weight_kg
+// ================================================================
 void RunCalibrationMode() {
   // ===== Приветственный экран — ждём отпускания кнопки =====
+  // Кнопка была нажата для входа в режим — ждём её отпускания,
+  // иначе первая итерация главного цикла сразу обработает это нажатие.
   display.clearDisplay();
   display.setTextSize(1);
   display.setCursor(0, 20);
@@ -39,24 +48,35 @@ void RunCalibrationMode() {
   display.print(F("Release button..."));
   display.display();
 
-  while (digitalRead(BUTTON_PIN) == LOW) { ESP.wdtFeed(); delay(10); }
-  delay(DEBOUNCE_MS);
+  unsigned long releaseStart = millis();
+  while (digitalRead(BUTTON_PIN) == LOW) {
+    ESP.wdtFeed();
+    // Защита от залипшей кнопки: максимум 30 секунд ожидания
+    if (millis() - releaseStart > 30000UL) break;
+    delay(10);
+  }
+  delay(DEBOUNCE_MS);  // антидребезг после отпускания
 
-  // ===== Инициализация =====
-  int menu_mode = 0;
-  const int MENU_COUNT = 7; // режимы: +10, -10, +1, -1, +0.1, -0.1, SAVE
+  // ===== Инициализация рабочих переменных =====
+  int menu_mode = 0;         // текущий активный режим [0..MENU_COUNT-1]
+  const int MENU_COUNT = 7;  // режимы: +10, -10, +1, -1, +0.1, -0.1, SAVE
 
-  float current_factor = savedData.cal_factor; // рабочая копия — в EEPROM не пишем до SAVE
-  scale.set_offset(savedData.tare_offset);      // применяем сохранённый offset (не меняем в калибровке)
-  bool hx711_ok = true;
+  // Рабочая копия коэффициента: изменяем её, в EEPROM пишем только при SAVE.
+  // Это позволяет отменить все изменения (перезагрузкой без SAVE).
+  float current_factor = savedData.cal_factor;
+  // Применяем сохранённый offset тарирования — при калибровке он не меняется
+  scale.set_offset(savedData.tare_offset);
+  bool hx711_ok = true;  // флаг успешного считывания HX711 в текущей итерации
 
-  unsigned long lastActionTime = millis();
+  unsigned long lastActionTime = millis();  // таймер бездействия для авто-выхода
 
   // ===== Главный цикл калибровки =====
   while (true) {
-    ESP.wdtFeed();
+    ESP.wdtFeed();  // кормим watchdog — цикл блокирующий
 
-    // -- Таймаут бездействия: выход без сохранения --
+    // -- Таймаут бездействия (CAL_IDLE_TIMEOUT_MS = 60 секунд) --
+    // Если пользователь не нажимал кнопку 60 секунд — выходим без сохранения.
+    // Защита от «зависания» если пользователь забыл закрыть режим.
     if (CoreLogic::TimeoutElapsed(millis(), lastActionTime, CAL_IDLE_TIMEOUT_MS)) {
       display.clearDisplay();
       display.setCursor(0, 20);
@@ -65,25 +85,30 @@ void RunCalibrationMode() {
       display.setCursor(0, 32);
       display.print(F("Not saved."));
       display.display();
-      delay(CAL_SAVED_MSG_MS);
+      delay(CAL_SAVED_MSG_MS);  // 2 секунды показываем сообщение
       Display_Off();
-      ESP.restart();
+      ESP.restart();  // перезагрузка без сохранения изменённого cal_factor
     }
 
-    // -- Критический заряд батареи: сохранить текущие данные и выключиться --
+    // -- Критический заряд батареи: аварийное сохранение и выключение --
+    // Сохраняем текущий рабочий коэффициент (даже незавершённую калибровку)
+    // чтобы не потерять прогресс при разряде батареи.
     Battery_Update();
     if (Battery_IsCritical()) {
+      savedData.cal_factor = current_factor;  // сохраняем текущий рабочий коэффициент
       Memory_ForceSave();
       Display_Off();
-      ESP.deepSleep(0);
+      ESP.deepSleep(0);  // бессрочный сон — батарея критически разряжена
     }
 
     // -- Считывание веса с текущим рабочим коэффициентом --
+    // Применяем current_factor (рабочую копию) — пользователь видит результат
+    // калибровки в реальном времени на экране.
     scale.set_scale(current_factor);
     float w = 0.0f;
     hx711_ok = false;
     if (scale.wait_ready_timeout(HX711_TIMEOUT_MS)) {
-      float raw = scale.get_units(HX711_SAMPLES_CAL);
+      float raw = scale.get_units(HX711_SAMPLES_CAL);  // 3 усреднения
       if (!isnan(raw) && !isinf(raw)) {
         w = raw;
         hx711_ok = true;
@@ -94,28 +119,28 @@ void RunCalibrationMode() {
 
     display.clearDisplay();
 
-    // Вес крупным шрифтом (или ERR если HX711 не отвечает)
+    // Вес крупным шрифтом (TextSize=2) — или ERR если HX711 не отвечает
     display.setTextSize(2);
     display.setCursor(0, 0);
     if (hx711_ok) {
-      display.print(w, 2);
+      display.print(w, 2);    // 2 знака после запятой для точной настройки
       display.print(F(" kg"));
     } else {
       display.print(F("ERR"));
     }
 
-    // Текущий коэффициент и номер режима
+    // Текущий коэффициент и номер режима в формате "F:2280.0 [1/7]"
     display.setTextSize(1);
     display.setCursor(0, 25);
     display.print(F("F:"));
-    display.print(current_factor, 1);
+    display.print(current_factor, 1);  // 1 знак после запятой достаточно для отображения
     display.print(F(" ["));
-    display.print(menu_mode + 1);
+    display.print(menu_mode + 1);  // показываем 1-based (1..7) для пользователя
     display.print(F("/"));
     display.print(MENU_COUNT);
     display.print(F("]"));
 
-    // Подсказка по текущему режиму
+    // Подсказка по текущему режиму: что делает короткое нажатие, длинное = следующий режим
     display.setCursor(0, 45);
     if      (menu_mode == 0) { display.print(F("Hold=Next Click=+10")); }
     else if (menu_mode == 1) { display.print(F("Hold=Next Click=-10")); }
@@ -128,49 +153,64 @@ void RunCalibrationMode() {
     display.display();
 
     // ===== Обработка нажатия кнопки =====
+    // Упрощённый (не FSM) опрос кнопки — режим калибровки блокирующий,
+    // поэтому используем прямое чтение пина с антидребезгом.
     if (digitalRead(BUTTON_PIN) == LOW) {
       delay(DEBOUNCE_MS);
-      if (digitalRead(BUTTON_PIN) != LOW) continue; // дребезг — игнорируем
+      if (digitalRead(BUTTON_PIN) != LOW) continue;  // дребезг — игнорируем
 
+      // Фиксируем момент подтверждённого нажатия
       unsigned long pressTime = millis();
+      unsigned long pressWaitStart = millis();
+      // Ждём отпускания кнопки
       while (digitalRead(BUTTON_PIN) == LOW) {
         ESP.wdtFeed();
+        // Защита от залипшей кнопки: максимум 30 секунд удержания
+        if (millis() - pressWaitStart > 30000UL) break;
         delay(10);
       }
-      delay(DEBOUNCE_MS);
-      // Сбрасываем таймер ПОСЛЕ отпускания — иначе время удержания засчитывается как простой
-      lastActionTime = millis();
-      unsigned long duration = millis() - pressTime;
+      delay(DEBOUNCE_MS);  // антидребезг после отпускания
+
+      // FIX-2: один вызов millis() для lastActionTime и duration —
+      // исключаем рассинхронизацию между двумя вызовами millis().
+      unsigned long releaseTime = millis();
+      lastActionTime = releaseTime;             // сбрасываем таймер бездействия
+      unsigned long duration = releaseTime - pressTime;  // длительность удержания
 
       if (duration > CAL_LONG_PRESS_MS) {
-        // Длинное нажатие — переход к следующему режиму (с wrap-around на 0)
+        // Длинное нажатие (>= 800 мс) — переход к следующему режиму с wrap-around.
+        // После режима 6 (SAVE) возвращаемся к режиму 0 (+10).
         menu_mode = (int)CoreLogic::WrapNext((uint8_t)menu_mode, MENU_COUNT);
       } else {
-        // Короткое нажатие — применить изменение коэффициента
+        // Короткое нажатие — применить шаг изменения коэффициента для текущего режима
         if      (menu_mode == 0) current_factor += 10.0f;
         else if (menu_mode == 1) current_factor -= 10.0f;
         else if (menu_mode == 2) current_factor += 1.0f;
         else if (menu_mode == 3) current_factor -= 1.0f;
+        // Режимы ±0.1: используем roundf для исключения накопительной ошибки float.
+        // Без roundf: 2280.0 + 0.1 + 0.1 + ... может дать 2280.30000001 вместо 2280.3.
         else if (menu_mode == 4) current_factor = roundf((current_factor + 0.1f) * 10.0f) / 10.0f;
         else if (menu_mode == 5) current_factor = roundf((current_factor - 0.1f) * 10.0f) / 10.0f;
         else if (menu_mode == 6) {
-          // Режим SAVE: clamp + записываем cal_factor в EEPROM и перезагружаемся
+          // Режим SAVE: зажимаем в допустимый диапазон, сохраняем в EEPROM и перезагружаемся
           if (current_factor < CAL_FACTOR_MIN) current_factor = CAL_FACTOR_MIN;
           if (current_factor > CAL_FACTOR_MAX) current_factor = CAL_FACTOR_MAX;
           savedData.cal_factor = current_factor;
           Memory_ForceSave();
 
+          // Показываем подтверждение сохранения
           display.clearDisplay();
           display.setCursor(0, 20);
           display.setTextSize(2);
           display.print(UiText::kSaved);
           display.display();
-          delay(CAL_SAVED_MSG_MS);
+          delay(CAL_SAVED_MSG_MS);  // 2 секунды
           Display_Off();
-          ESP.restart();
+          ESP.restart();  // перезагружаемся с новым cal_factor — он будет загружен из EEPROM
         }
 
-        // Защита от выхода за допустимые пределы коэффициента
+        // Защита от выхода current_factor за допустимые пределы при любом режиме.
+        // CAL_FACTOR_MIN=1.0, CAL_FACTOR_MAX=10000.0 — диапазон HX711 для типичных тензодатчиков.
         if (current_factor < CAL_FACTOR_MIN) current_factor = CAL_FACTOR_MIN;
         if (current_factor > CAL_FACTOR_MAX) current_factor = CAL_FACTOR_MAX;
       }
